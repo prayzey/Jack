@@ -1,0 +1,8 @@
+#!/bin/bash
+# Back-compat wrapper — prefer: jack start
+case "${1:-}" in
+  restart|release) sub="$1" ;;
+  run|build|"") sub="start" ;;
+  *) sub="$1" ;;
+esac
+exec "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/bin/jack" "$sub" "${@:2}"

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- App Sandbox (required for Mac App Store / TestFlight) -->
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+
+    <!-- Outgoing network connections for link metadata fetching (favicons, og:tags) -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+
+    <!-- Read/write access to user-selected files: the user picks an Obsidian
+         vault folder and Jack syncs notes into it as .md files. -->
+    <key>com.apple.security.files.user-selected.read-write</key>
+    <true/>
+
+    <!-- App-scoped security bookmarks so the chosen vault stays accessible
+         across launches under the sandbox (vault sync). -->
+    <key>com.apple.security.files.bookmarks.app-scope</key>
+    <true/>
+</dict>
+</plist>

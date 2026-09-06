@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/" version="2.0">
+    <channel>
+        <title>Jack</title>
+        <link>https://raw.githubusercontent.com/prayzey/Jack/main/appcast.xml</link>
+        <description>Direct-download updates for Jack.</description>
+        <language>en</language>
+        <item>
+            <title>1.0.4</title>
+            <pubDate>Fri, 04 Sep 2026 21:29:04 -0400</pubDate>
+            <link>https://gilt.novor.dev</link>
+            <sparkle:fullReleaseNotesLink>https://gilt.novor.dev/releases/v1.0.4</sparkle:fullReleaseNotesLink>
+            <sparkle:version>601</sparkle:version>
+            <sparkle:shortVersionString>1.0.4</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://downloads.gilt.novor.dev/releases/v1.0.4/Gilt-1.0.4.dmg" length="388666211" type="application/octet-stream" sparkle:edSignature="zyeSIL9E7tM8kvptedzXQy4gF4zS0SYvl0NN/h2e9kEl9L18/SwZbNzJRlo3vaY233gSQ4QDd08VMb4fY/Z4Cg=="/>
+            <sparkle:deltas>
+                <enclosure url="https://downloads.gilt.novor.dev/releases/v1.0.4/Jack601-590.delta" sparkle:deltaFrom="590" length="2247130" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977808" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="mHBomqeUL53DaiRodzx2+IK5ghUi2Yg9bMGkIBKMKSJF2KOhJjuCsXPAtoeD084ZuZesTbohCxBG+EIanfDwDg=="/>
+                <enclosure url="https://downloads.gilt.novor.dev/releases/v1.0.4/Jack601-273.delta" sparkle:deltaFrom="273" length="60599658" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="980432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="2IdyrF3r1XAr5mHHJ87n6DwY34z6f4+0JfWQxi5+lzXOQDgt3HyARKuSARPYIsQ/CZgpT6OLToCsnHPolrh5Cw=="/>
+                <enclosure url="https://downloads.gilt.novor.dev/releases/v1.0.4/Jack601-259.delta" sparkle:deltaFrom="259" length="62444362" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="980432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="iZJzyiFJbkRr10karK/13AJenFcP7/Ejs1BAxi/pUyK7NKjqQDSIqYeosoq+oeV8b1cBMGyb13ohmRSaehF0Dw=="/>
+            </sparkle:deltas>
+        </item>
+        <item>
+            <title>1.0.3</title>
+            <pubDate>Mon, 27 Jul 2026 21:06:15 -0400</pubDate>
+            <link>https://gilt.novor.dev</link>
+            <sparkle:fullReleaseNotesLink>https://gilt.novor.dev/releases/v1.0.3</sparkle:fullReleaseNotesLink>
+            <sparkle:version>590</sparkle:version>
+            <sparkle:shortVersionString>1.0.3</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://downloads.gilt.novor.dev/releases/v1.0.3/Gilt-1.0.3.dmg" length="388507479" type="application/octet-stream" sparkle:edSignature="lfu+L35qoqKsXtBLUOh9DjXe/umuT9JcASc5e5H1VzA/Va7bfOb2OWh9GPOzb+ZzT5NiNTgz4Y8/hDEAWk1WAg=="/>
+            <sparkle:deltas>
+                <enclosure url="https://downloads.gilt.novor.dev/releases/v1.0.3/Jack590-273.delta" sparkle:deltaFrom="273" length="60573770" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="980432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="3EkhDAGodwou/Z4O52GyI9jzRMUOwgrAdJlJMKKi0gQPTFxNoEgisfcj8iOm/JvRSqIOMJUVIvD1dsctOLOsCg=="/>
+                <enclosure url="https://downloads.gilt.novor.dev/releases/v1.0.3/Jack590-259.delta" sparkle:deltaFrom="259" length="62412874" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="980432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="SGONuBUgsDleP5EtkyRX4kcMVeyrnxcuYwuqcfnkFowSoHh4Ss0cPuTCwCk53tCNPuFwMhr4o53j5WxS7MEhDA=="/>
+                <enclosure url="https://downloads.gilt.novor.dev/releases/v1.0.3/Jack590-244.delta" sparkle:deltaFrom="244" length="62415050" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="980432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="VcDixC+Xks8riOMHIfE2O1uXcoXAsNG2Wzpf5wkySr64FRrjulDNLeU92fhAr1YLUY6fJwsSoR63UutUfHneAw=="/>
+            </sparkle:deltas>
+        </item>
+        <item>
+            <title>1.0.2</title>
+            <pubDate>Fri, 03 Apr 2026 18:57:24 +0100</pubDate>
+            <link>https://gilt.novor.dev</link>
+            <sparkle:fullReleaseNotesLink>https://gilt.novor.dev/releases/v1.0.2</sparkle:fullReleaseNotesLink>
+            <sparkle:version>273</sparkle:version>
+            <sparkle:shortVersionString>1.0.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://downloads.gilt.novor.dev/releases/v1.0.2/Gilt-1.0.2.dmg" length="321428362" type="application/octet-stream" sparkle:edSignature="oiOLLE4xw/I17NPfueXavyxqmJ6fKY/d9W2LwHi3QpNSwhZlB8fNLccWQIlkcemHdshkUwhzsbl3gWFrXSJ6AA=="/>
+            <sparkle:deltas>
+                <enclosure url="https://downloads.gilt.novor.dev/releases/v1.0.2/Gilt273-259.delta" sparkle:deltaFrom="259" length="685078" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="980432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="65ZQqY4qdtiT71oQyhJo3IUSidmT+Z+oTG98GPK8avfDEv3w6YOGHXlmj2HlpbjqPRRnlR4HfL+mlT9v2zPmCQ=="/>
+                <enclosure url="https://downloads.gilt.novor.dev/releases/v1.0.2/Gilt273-244.delta" sparkle:deltaFrom="244" length="1038794" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="980432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="SBMY3zEIwNarm2zEqUsaRgAg8vpO7uO8vdKUkm0JPkbqDM6JkaWpGhZfCCmGlPAq2yUYRTEO/ndZP7O3VFePDQ=="/>
+            </sparkle:deltas>
+        </item>
+    </channel>
+</rss>

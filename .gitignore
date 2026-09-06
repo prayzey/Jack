@@ -1,0 +1,27 @@
+.DS_Store
+/.build
+/.build-codex/
+/Packages
+xcuserdata/
+DerivedData/
+.swiftpm/configuration/registries.json
+.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
+.netrc
+Gilt.app/
+Jack.app/
+*.dmg
+*.app.zip
+.playwright-cli/
+release_setup.md
+.wrangler/
+node_modules/
+sparkle-archives/
+
+# Local mirror of HF-hosted AI models (Qwen, Whisper, Parakeet).
+# Kept out of git and excluded from release builds (scripts/build-app.sh
+# only copies from Sources/). This directory is for personal backup only.
+/models/
+
+# transcribe.cpp vendor build (only the shim source is tracked)
+Vendor/transcribe.cpp/
+Vendor/jack-transcribe-stream/jack-transcribe-stream

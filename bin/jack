@@ -1,0 +1,76 @@
+#!/bin/bash
+# jack — Dev CLI for the Jack macOS app
+#
+#   jack start     quit Jack, debug build, launch
+#   jack restart   quit Jack, relaunch (no rebuild)
+#   jack release   quit Jack, release build, launch
+#
+# One-time setup: ./scripts/install-jack-cli.sh
+
+set -euo pipefail
+
+# When installed via ~/.local/bin/jack symlink, BASH_SOURCE[0] is the link path —
+# resolve to the real bin/jack so ROOT is the project, not ~/.local.
+source_path="${BASH_SOURCE[0]}"
+while [[ -L "$source_path" ]]; do
+  link_dir="$(cd -P "$(dirname "$source_path")" && pwd)"
+  source_path="$(readlink "$source_path")"
+  [[ "$source_path" != /* ]] && source_path="$link_dir/$source_path"
+done
+script_dir="$(cd -P "$(dirname "$source_path")" && pwd)"
+ROOT="$(cd "$script_dir/.." && pwd)"
+cd "$ROOT"
+
+APP_NAME="${APP_NAME:-Jack}"
+
+quit_app() {
+  pkill -x "$APP_NAME" 2>/dev/null || true
+  sleep 1
+}
+
+usage() {
+  cat <<EOF
+Usage: jack <command>
+
+Commands:
+  start     Build Jack.app and launch (default dev workflow)
+  restart   Quit and reopen without rebuilding
+  release   Release build and launch
+
+Setup (once): ./scripts/install-jack-cli.sh
+EOF
+}
+
+cmd_run() {
+  quit_app
+  "$ROOT/scripts/build-app.sh"
+  open "$ROOT/$APP_NAME.app"
+}
+
+cmd_restart() {
+  quit_app
+  open "$ROOT/$APP_NAME.app"
+}
+
+cmd_release() {
+  quit_app
+  "$ROOT/scripts/build-app.sh" release
+  open "$ROOT/$APP_NAME.app"
+}
+
+case "${1:-}" in
+  start|run) cmd_run ;;
+  restart) cmd_restart ;;
+  release) cmd_release ;;
+  -h|--help|help) usage ;;
+  "")
+    usage >&2
+    exit 1
+    ;;
+  *)
+    echo "Unknown command: $1" >&2
+    echo >&2
+    usage >&2
+    exit 1
+    ;;
+esac
