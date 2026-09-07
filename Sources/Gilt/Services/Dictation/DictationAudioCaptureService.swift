@@ -195,18 +195,34 @@ final class DictationAudioCaptureService {
             throw error
         }
 
-        configurationObserver = NotificationCenter.default.addObserver(
-            forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in
-                guard let self, self.captureID == id, self.isRecording else { return }
-                self.interruption = .deviceChanged
-                self.stop(immediately: true)
-            }
+        configurationObserver = Self.observeConfigurationChanges(for: engine) { [weak self] in
+            guard let self, self.captureID == id, self.isRecording else { return }
+            self.interruption = .deviceChanged
+            self.stop(immediately: true)
         }
         startedAt = Date()
         isRecording = true
         logger.info("Dictation audio capture started")
+    }
+
+    static func observeConfigurationChanges(
+        for engine: AVAudioEngine,
+        onInterruption: @escaping @MainActor () -> Void
+    ) -> NSObjectProtocol {
+        let checkEngine: @MainActor () -> Void = { [weak engine] in
+            // Startup can deliver a queued configuration notification after
+            // recording begins. A real hardware interruption stops the engine;
+            // check its current state before tearing down a working microphone.
+            guard let engine, !engine.isRunning else { return }
+            onInterruption()
+        }
+        return NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
+        ) { _ in
+            Task { @MainActor in
+                checkEngine()
+            }
+        }
     }
 
     /// Result of the off-main engine bootstrap. Carried across actor

@@ -7,6 +7,33 @@ import XCTest
 
 @MainActor
 final class DictationReliabilityTests: XCTestCase {
+    private final class ConfigurationTestEngine: AVAudioEngine {
+        var reportsRunning = true
+        override var isRunning: Bool { reportsRunning }
+    }
+
+    func testConfigurationNotificationsOnlyInterruptAnEngineThatIsStillStopped() async throws {
+        let engine = ConfigurationTestEngine()
+        var interruptions = 0
+        let observer = DictationAudioCaptureService.observeConfigurationChanges(for: engine) {
+            interruptions += 1
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        // Startup can queue a notification before the engine has finished starting.
+        engine.reportsRunning = false
+        NotificationCenter.default.post(name: .AVAudioEngineConfigurationChange, object: engine)
+        engine.reportsRunning = true
+        try await Task.sleep(for: .milliseconds(40))
+        XCTAssertEqual(interruptions, 0, "A stale startup notification must not stop a running microphone")
+
+        // A real interruption leaves the engine stopped and must still be reported.
+        engine.reportsRunning = false
+        NotificationCenter.default.post(name: .AVAudioEngineConfigurationChange, object: engine)
+        try await Task.sleep(for: .milliseconds(40))
+        XCTAssertEqual(interruptions, 1)
+    }
+
     func testReleaseDuringPermissionRequestNeverStartsTheMicrophone() async throws {
         var grant: CheckedContinuation<Bool, Never>?
         let audio = DictationAudioCaptureService {
