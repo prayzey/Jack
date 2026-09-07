@@ -13,11 +13,10 @@ final class LiveDictationPolisherTests: XCTestCase {
         ))
     }
 
-    func testTerminatorInsideTentativeTailIsNotPolishable() {
-        // The period is on the 5th of 6 words — inside the last-two-words
-        // tentative region the streaming model may still revise.
+    func testOnlyEngineConfirmedTextEntersBoundaryDetection() {
+        // The caller excludes tentative words, including their punctuation.
         XCTAssertNil(LiveDictationPolisher.polishablePrefix(
-            in: "i need to buy tomatoes. oops",
+            in: "i need to",
             lastPrefixWordCount: 0
         ))
     }
@@ -59,7 +58,7 @@ final class LiveDictationPolisherTests: XCTestCase {
         let raw = "I need to buy some tomatoes for tonight. Actually no I meant onions okay"
         let prefix = LiveDictationPolisher.polishablePrefix(in: raw, lastPrefixWordCount: 8)
         XCTAssertNotNil(prefix, "marker did not trigger a pass")
-        XCTAssertTrue(prefix!.hasSuffix("meant"), "unexpected boundary: \(prefix!)")
+        XCTAssertTrue(prefix!.hasSuffix("okay"), "unexpected boundary: \(prefix!)")
     }
 
     func testUnpunctuatedSpeechFallsBackToWordCountBoundary() {
@@ -70,7 +69,7 @@ final class LiveDictationPolisherTests: XCTestCase {
         let prefix = LiveDictationPolisher.polishablePrefix(in: raw, lastPrefixWordCount: 0)
         XCTAssertEqual(
             prefix,
-            "i need to go and buy some food for my friend so we should buy tomatoes plus"
+            raw
         )
         // No new boundary until another 12 stable words accumulate.
         XCTAssertNil(LiveDictationPolisher.polishablePrefix(
@@ -90,9 +89,8 @@ final class LiveDictationPolisherTests: XCTestCase {
             lastPrefixWordCount: LiveCaptionComposer.wordCount(first ?? "")
         )
         XCTAssertNotNil(second)
-        // Stable region excludes the last two tentative words ("threshold
-        // easily"), so the fallback prefix ends at "fallback".
-        XCTAssertTrue(second!.hasSuffix("fallback"))
+        // Every word here is confirmed by the engine, including the tail.
+        XCTAssertTrue(second!.hasSuffix("easily"))
     }
 
     // MARK: - Ingest → polish → compose
@@ -103,13 +101,13 @@ final class LiveDictationPolisherTests: XCTestCase {
             polishChunk: { $0.replacingOccurrences(of: "tomatoes", with: "onions") }
         )
         let raw = "i need to buy tomatoes. no wait i mean onions for sure"
-        polisher.ingest(raw)
+        polisher.ingest(committedRaw: raw)
         await polisher.finishSession()
 
         XCTAssertEqual(polisher.polishedRawPrefix, "i need to buy tomatoes.")
         XCTAssertEqual(polisher.polishedText, "i need to buy onions.")
 
-        let state = polisher.compose(cumulativeRaw: raw)
+        let state = polisher.compose(cumulativeRaw: raw, committedRaw: "i need to buy tomatoes.")
         XCTAssertNotNil(state)
         XCTAssertTrue(state!.text.hasPrefix("i need to buy onions."))
         XCTAssertTrue(state!.text.contains("mean onions for sure"))
@@ -125,10 +123,10 @@ final class LiveDictationPolisherTests: XCTestCase {
             prepare: { $0 },
             polishChunk: { $0.replacingOccurrences(of: "tomatoes", with: "onions") }
         )
-        polisher.ingest("i need to buy tomatoes. oops i  mean")
+        polisher.ingest(committedRaw: "i need to buy tomatoes. oops i  mean")
         await polisher.finishSession()
 
-        let state = polisher.compose(cumulativeRaw: "i need to  buy tomatoes. oops i  mean onions now")
+        let state = polisher.compose(cumulativeRaw: "i need to  buy tomatoes. oops i  mean onions now", committedRaw: "i need to buy tomatoes.")
         XCTAssertNotNil(state)
         XCTAssertTrue(state!.text.hasPrefix("i need to buy onions."))
     }
@@ -138,10 +136,10 @@ final class LiveDictationPolisherTests: XCTestCase {
             prepare: { $0 },
             polishChunk: { $0 }
         )
-        polisher.ingest("i need to buy tomatoes. oops i mean")
+        polisher.ingest(committedRaw: "i need to buy tomatoes. oops i mean")
         await polisher.finishSession()
 
-        XCTAssertNil(polisher.compose(cumulativeRaw: "completely different transcript now"))
+        XCTAssertNil(polisher.compose(cumulativeRaw: "completely different transcript now", committedRaw: "completely different"))
     }
 
     func testFinalResultRequiresExactInputMatch() async {
@@ -149,7 +147,7 @@ final class LiveDictationPolisherTests: XCTestCase {
             prepare: { $0 },
             polishChunk: { $0.uppercased() }
         )
-        polisher.ingest("i need to buy tomatoes. oops i mean")
+        polisher.ingest(committedRaw: "i need to buy tomatoes. oops i mean")
         await polisher.finishSession()
 
         XCTAssertEqual(
@@ -171,9 +169,9 @@ final class LiveDictationPolisherTests: XCTestCase {
         )
         // First boundary starts a pass; the next two land while it runs and
         // collapse into a single follow-up pass (drop-intermediate).
-        polisher.ingest("first sentence done here. second one is")
-        polisher.ingest("first sentence done here. second one is now finished. and more words")
-        polisher.ingest("first sentence done here. second one is now finished. third also complete. trailing tentative words")
+        polisher.ingest(committedRaw: "first sentence done here. second one is")
+        polisher.ingest(committedRaw: "first sentence done here. second one is now finished. and more words")
+        polisher.ingest(committedRaw: "first sentence done here. second one is now finished. third also complete. trailing tentative words")
         // finishSession would drop the queued pass (that's its job at session
         // end), so poll until the drop-intermediate chain settles instead.
         for _ in 0..<200 where !polisher.polishedRawPrefix.contains("third") {

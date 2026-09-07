@@ -58,10 +58,10 @@ final class LiveDictationPolisher {
 
     // MARK: - Streaming input
 
-    func ingest(_ cumulativeRaw: String) {
+    func ingest(committedRaw: String) {
         let scheduledWords = LiveCaptionComposer.wordCount(scheduledRawPrefix)
         guard let prefix = Self.polishablePrefix(
-            in: Self.normalizeWhitespace(cumulativeRaw),
+            in: Self.normalizeWhitespace(committedRaw),
             lastPrefixWordCount: scheduledWords
         ) else { return }
         guard prefix.count <= Self.maxLiveChars else { return }
@@ -79,7 +79,7 @@ final class LiveDictationPolisher {
         }
         polishTask = Task { [weak self] in
             await self?.runPolish(rawPrefix)
-            guard let self else { return }
+            guard let self, !Task.isCancelled else { return }
             self.polishTask = nil
             if let pending = self.pendingRawPrefix {
                 self.pendingRawPrefix = nil
@@ -107,7 +107,7 @@ final class LiveDictationPolisher {
 
     /// Polished prefix + cleaned raw suffix, or nil when there's nothing
     /// polished yet (caller falls back to the plain live caption).
-    func compose(cumulativeRaw: String) -> LiveCaptionComposer.State? {
+    func compose(cumulativeRaw: String, committedRaw: String) -> LiveCaptionComposer.State? {
         guard !polishedText.isEmpty else { return nil }
         // Normalize before the prefix check — the ASR helper joins committed
         // and tentative segments with raw token spacing, so the cumulative
@@ -117,7 +117,8 @@ final class LiveDictationPolisher {
         // Committed ASR text never changes, so the polished raw prefix should
         // always still lead the cumulative text. If it somehow doesn't,
         // showing the plain raw caption is the safe fallback.
-        guard trimmed.hasPrefix(polishedRawPrefix) else {
+        let committed = Self.normalizeWhitespace(committedRaw)
+        guard trimmed.hasPrefix(polishedRawPrefix), committed.hasPrefix(polishedRawPrefix) else {
             MeetingDownloadLog.log("[live-polish] compose prefix mismatch — heal not shown")
             return nil
         }
@@ -125,11 +126,11 @@ final class LiveDictationPolisher {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let suffix = suffixRaw.isEmpty ? "" : TranscriptCleaner.clean(suffixRaw)
         let text = suffix.isEmpty ? polishedText : polishedText + " " + suffix
-        // Everything renders sharp — the tentative-tail distinction is an
-        // internal safety line for the polisher, not a visual treatment.
+        let committedSuffix = String(committed.dropFirst(polishedRawPrefix.count))
         return LiveCaptionComposer.State(
             text: text,
-            stableWordCount: LiveCaptionComposer.wordCount(text)
+            stableWordCount: LiveCaptionComposer.wordCount(polishedText)
+                + LiveCaptionComposer.wordCount(TranscriptCleaner.clean(committedSuffix))
         )
     }
 
@@ -185,9 +186,8 @@ final class LiveDictationPolisher {
         "scratch that", "didn't mean", "no wait"
     ]
 
-    /// The prefix of `cumulative` that's safe to polish, bounded to the
-    /// stable region (everything except the last two words, which the
-    /// streaming model still treats as tentative).
+    /// The caller supplies the engine's committed region, never a guessed
+    /// number of trailing words. Punctuation in tentative text is not a boundary.
     ///
     /// Preferred boundary: the last sentence terminator in the stable region.
     /// Fallback: the whole stable region, once it has grown at least
@@ -199,8 +199,7 @@ final class LiveDictationPolisher {
         let trimmed = cumulative.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         let words = trimmed.split(whereSeparator: \.isWhitespace)
-        guard words.count > 2 else { return nil }
-        let stable = words.dropLast(2).joined(separator: " ")
+        let stable = words.joined(separator: " ")
 
         if let idx = stable.lastIndex(where: { ".!?".contains($0) }) {
             let prefix = String(stable[...idx]).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -217,15 +216,14 @@ final class LiveDictationPolisher {
             }
         }
 
-        let stableWords = words.count - 2
+        let stableWords = words.count
         guard stableWords > lastPrefixWordCount else { return nil }
         if stableWords - lastPrefixWordCount >= fallbackBoundaryWords {
             return stable
         }
         // Look a few words back across the boundary so a marker that
         // straddles it ("…tomatoes wait | no I meant…") still matches.
-        let tail = words.dropLast(2)
-            .dropFirst(max(0, lastPrefixWordCount - 3))
+        let tail = words.dropFirst(max(0, lastPrefixWordCount - 3))
             .joined(separator: " ")
             .lowercased()
         if correctionMarkers.contains(where: { tail.contains($0) }) {

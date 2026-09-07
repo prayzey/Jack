@@ -105,13 +105,13 @@ final class TranscribeCppStreamingEngineTests: XCTestCase {
         XCTAssertFalse(TranscribeCppStreamingEngine.modelFileIsValid(at: tmp))
     }
 
-    func testModelFileValidityAcceptsGGUFMagicAndRejectsMissing() throws {
+    func testModelFileValidityRejectsHeaderOnlyFileAndMissing() throws {
         let good = FileManager.default.temporaryDirectory
             .appendingPathComponent("good-\(UUID().uuidString).gguf")
         // GGUF magic ("GGUF") + a little padding.
         try (Data([0x47, 0x47, 0x55, 0x46]) + Data(repeating: 0, count: 16)).write(to: good)
         defer { try? FileManager.default.removeItem(at: good) }
-        XCTAssertTrue(TranscribeCppStreamingEngine.modelFileIsValid(at: good))
+        XCTAssertFalse(TranscribeCppStreamingEngine.modelFileIsValid(at: good))
 
         let missing = FileManager.default.temporaryDirectory
             .appendingPathComponent("nope-\(UUID().uuidString).gguf")

@@ -333,7 +333,7 @@ final class WhisperTranscriptionEngine: MeetingTranscriptionEngineProtocol {
     static func whisperKitModelName(for engine: MeetingTranscriptionEngine) -> String {
         switch engine {
         case .whisperSmallMultilingual: return "openai_whisper-small"
-        case .parakeetFlash, .parakeetV2, .parakeetUnifiedStream: return "openai_whisper-small" // never used; satisfies exhaustiveness
+        case .parakeetFlash, .parakeetV2, .parakeetUnifiedStream, .appleSpeech: return "openai_whisper-small" // never used; satisfies exhaustiveness
         }
     }
 }

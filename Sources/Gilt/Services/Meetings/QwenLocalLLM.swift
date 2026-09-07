@@ -38,10 +38,11 @@ final class QwenLocalLLM {
     private var isDownloadingFile = false
     /// True while a `generate` call is mid-`respond` — see the guard there.
     private var isGenerating = false
+    private var unloadAfterGeneration = false
 
     private init() {}
 
-    var isLoaded: Bool { bot != nil }
+    var isLoaded: Bool { bot != nil && !unloadAfterGeneration }
 
     nonisolated static func cachedModelURL(in cacheDirectory: URL) -> URL {
         cacheDirectory.appendingPathComponent(modelFileName)
@@ -59,6 +60,7 @@ final class QwenLocalLLM {
         cacheDirectory: URL,
         onProgress: @MainActor @Sendable @escaping (Double) -> Void = { _ in }
     ) async throws {
+        guard !unloadAfterGeneration else { throw QwenLLMError.notLoaded }
         if bot != nil {
             MeetingDownloadLog.log("Qwen already loaded — skipping ensureLoaded")
             return
@@ -115,7 +117,14 @@ final class QwenLocalLLM {
             try await self.loadModel(from: destination, onProgress: onProgress)
         }
         loadingTask = task
-        defer { loadingTask = nil }
+        defer {
+            loadingTask = nil
+            if unloadAfterGeneration, !isGenerating {
+                bot = nil
+                unloadAfterGeneration = false
+                LLM.shutdownBackend()
+            }
+        }
         try await task.value
     }
 
@@ -127,6 +136,7 @@ final class QwenLocalLLM {
         cacheDirectory: URL,
         onProgress: @MainActor @Sendable @escaping (Double) -> Void = { _ in }
     ) async throws -> Bool {
+        guard !unloadAfterGeneration else { return false }
         if bot != nil { return true }
         // Never block on an in-flight download. Callers like the dictation
         // post-processor must paste raw text immediately if Qwen isn't ready
@@ -142,8 +152,8 @@ final class QwenLocalLLM {
             return bot != nil
         }
         guard Self.cachedModelExists(in: cacheDirectory) else { return false }
-        try await loadModel(from: Self.cachedModelURL(in: cacheDirectory), onProgress: onProgress)
-        return true
+        try await ensureLoaded(cacheDirectory: cacheDirectory, onProgress: onProgress)
+        return bot != nil
     }
 
     /// Run a single non-streaming completion. Resets per-call so prior calls
@@ -164,6 +174,8 @@ final class QwenLocalLLM {
     func generate(
         prompt: String,
         maxOutputCharacters: Int? = nil,
+        outputBudgetText: String? = nil,
+        timeoutSeconds: Double = 60,
         onPartial: (@MainActor (String) -> Void)? = nil
     ) async throws -> String {
         // llama.cpp shares one context per LLM instance — two concurrent
@@ -171,39 +183,82 @@ final class QwenLocalLLM {
         // live dictation polisher and the final polish pass (or the meeting
         // summarizer) can overlap, so serialize here, at the choke point.
         // ponytail: poll-wait, not a queue — callers are rare and short.
+        let deadline = ContinuousClock.now.advanced(by: .seconds(timeoutSeconds))
         while isGenerating {
+            guard ContinuousClock.now < deadline else { throw GenerationDeadline.Failure.timedOut }
             try await Task.sleep(nanoseconds: 50_000_000)
         }
+        try Task.checkCancellation()
         guard let bot else { throw QwenLLMError.notLoaded }
         isGenerating = true
-        defer { isGenerating = false }
-        bot.history = []
-
-        var watchdog: Task<Void, Never>?
-        if maxOutputCharacters != nil || onPartial != nil {
-            let cap = maxOutputCharacters
-            watchdog = Task { @MainActor [weak bot] in
+        var acceptingPartials = true
+        let remaining = ContinuousClock.now.duration(to: deadline)
+        let seconds = Double(remaining.components.seconds) + Double(remaining.components.attoseconds) / 1e18
+        return try await GenerationDeadline.run(
+            seconds: seconds,
+            onStop: { [self] in
+                acceptingPartials = false
+                // This library's actor loop may finish before stop is serviced.
+                // Keep its context occupied, then discard it after completion.
+                unloadAfterGeneration = true
+                bot.stop()
+            },
+            onCompletion: { [self] in
+                isGenerating = false
+                if unloadAfterGeneration {
+                    self.bot = nil
+                    unloadAfterGeneration = false
+                }
+            }
+        ) {
+            let processed = bot.preprocess(prompt, [], .suppressed)
+            let inputTokens = await bot.encode(processed)
+            // Never let the backend silently truncate or exhaust its context.
+            let outputTokens: Int
+            if let outputBudgetText { outputTokens = max(512, await bot.encode(outputBudgetText).count * 2) }
+            else { outputTokens = 896 }
+            guard inputTokens.count + outputTokens <= 4096 else { throw QwenLLMError.inputTooLong }
+            bot.history = []
+            bot.setOutput(to: "")
+            var exceededCap = false
+            let watchdog = Task { @MainActor in
                 while !Task.isCancelled {
-                    try? await Task.sleep(nanoseconds: 150_000_000)
-                    guard let bot, !Task.isCancelled else { return }
-                    let output = bot.output
-                    onPartial?(output)
-                    if let cap, output.count > cap {
+                    try? await Task.sleep(for: .milliseconds(100))
+                    guard !Task.isCancelled, acceptingPartials else { return }
+                    if let cap = maxOutputCharacters, bot.output.count > cap {
+                        self.unloadAfterGeneration = true
+                        exceededCap = true
+                        acceptingPartials = false
                         bot.stop()
                         return
                     }
+                    onPartial?(bot.output)
                 }
             }
+            defer { watchdog.cancel() }
+            await bot.respond(to: prompt, thinking: .suppressed)
+            watchdog.cancel()
+            await watchdog.value
+            if exceededCap { throw QwenLLMError.outputLimit }
+            return bot.output.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        await bot.respond(to: prompt, thinking: .suppressed)
-        watchdog?.cancel()
-        return bot.output.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Eagerly tear down the model — frees memory when the user deletes it
     /// from the Models panel.
     func unload() {
+        if let loadingTask {
+            unloadAfterGeneration = true
+            loadingTask.cancel()
+            return
+        }
+        if isGenerating {
+            unloadAfterGeneration = true
+            return
+        }
         bot = nil
+        // ggml's Metal device must release its pools before process-wide
+        // static destruction. Never do this during generation or model load.
         LLM.shutdownBackend()
     }
 
@@ -221,17 +276,21 @@ final class QwenLocalLLM {
         // made outputs vary run-to-run and occasionally drop content
         // outright (e.g. rewriting "john.smith@gmail.com" to "John Smith").
         // Determinism here is a correctness feature, not a style choice.
-        guard let loaded = LLM(
-            from: destination,
-            seed: 42,
-            topK: 1,
-            topP: 1.0,
-            temp: 0,
-            maxTokenCount: 4096
-        ) else {
+        let model = await Task.detached(priority: .userInitiated) {
+            // Cooperative workers have no AppKit autorelease-pool cycle.
+            // Drain temporary Metal objects here so backend teardown doesn't
+            // find retained residency sets after the model has been released.
+            autoreleasepool {
+                QwenLoadedModel(bot: LLM(
+                    from: destination, seed: 42, topK: 1, topP: 1.0, temp: 0, maxTokenCount: 4096
+                ))
+            }
+        }.value
+        try Task.checkCancellation()
+        guard let loaded = model.bot else {
             let elapsed = Date().timeIntervalSince(loadStart)
-            MeetingDownloadLog.log("LLM.init returned nil after \(String(format: "%.1f", elapsed))s — wiping file")
-            try? FileManager.default.removeItem(at: destination)
+            MeetingDownloadLog.log("LLM.init returned nil after \(String(format: "%.1f", elapsed))s")
+            // A memory-pressure failure does not establish file corruption.
             throw QwenLLMError.loadFailed
         }
         let loadElapsed = Date().timeIntervalSince(loadStart)
@@ -403,19 +462,36 @@ final class QwenLocalLLM {
 }
 
 
+/// LLM is created on one worker, then exclusively owned by MainActor.
+private struct QwenLoadedModel: @unchecked Sendable { let bot: LLM? }
+
 final class QwenProgressObserverHolder<Observer: AnyObject>: @unchecked Sendable {
     private let lock = NSLock()
     private var observer: Observer?
+    private var task: URLSessionTask?
+    private var cancelled = false
 
-    func store(_ observer: Observer) {
+    func store(_ observer: Observer, task: URLSessionTask? = nil) {
         lock.lock()
         self.observer = observer
+        self.task = task
+        let shouldCancel = cancelled
         lock.unlock()
+        if shouldCancel { task?.cancel() }
+    }
+
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        let current = task
+        lock.unlock()
+        current?.cancel()
     }
 
     func clear() {
         lock.lock()
         observer = nil
+        task = nil
         lock.unlock()
     }
 }
@@ -449,6 +525,7 @@ final class QwenProgressObserver: NSObject, @unchecked Sendable {
 }
 
 enum QwenLLMError: LocalizedError {
+    case inputTooLong, outputLimit
     case notLoaded
     case loadFailed
     case downloadFailed(statusCode: Int)
@@ -457,6 +534,8 @@ enum QwenLLMError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .inputTooLong: return L10n.string("dictation.error.inputTooLong", default: "The text is too long for the local AI model.")
+        case .outputLimit: return L10n.string("dictation.error.outputLimit", default: "The local AI response exceeded its limit.")
         case .notLoaded:
             return "The Qwen summary model isn't loaded yet."
         case .loadFailed:

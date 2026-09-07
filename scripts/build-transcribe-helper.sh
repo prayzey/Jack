@@ -12,9 +12,18 @@ VENDOR="$ROOT/Vendor"
 TCPP="$VENDOR/transcribe.cpp"
 SHIM_DIR="$VENDOR/jack-transcribe-stream"
 INSTALL_DIR="$HOME/Library/Application Support/Jack/bin"
+TRANSCRIBE_REVISION="faa64cf292a2bf31174dad9e6b660f3e4c0e4a75"
 
 if [ ! -d "$TCPP" ]; then
-  git clone --depth 1 https://github.com/handy-computer/transcribe.cpp "$TCPP"
+  git init "$TCPP"
+  git -C "$TCPP" remote add origin https://github.com/handy-computer/transcribe.cpp
+  git -C "$TCPP" fetch --depth 1 origin "$TRANSCRIBE_REVISION"
+  git -C "$TCPP" checkout --detach FETCH_HEAD
+fi
+
+if [ "$(git -C "$TCPP" rev-parse HEAD)" != "$TRANSCRIBE_REVISION" ] || [ -n "$(git -C "$TCPP" status --porcelain)" ]; then
+  echo "transcribe.cpp must be clean at $TRANSCRIBE_REVISION; preserve local work before rebuilding."
+  exit 1
 fi
 
 cmake -S "$TCPP" -B "$TCPP/build" -DCMAKE_BUILD_TYPE=Release \

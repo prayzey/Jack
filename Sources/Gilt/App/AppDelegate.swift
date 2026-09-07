@@ -130,6 +130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        QwenLocalLLM.shared.unload()
         Breadcrumb.record("applicationWillTerminate")
         logLifecycle("applicationWillTerminate uptime=\(uptimeString)")
         removeWorkspaceObservers()

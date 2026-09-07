@@ -81,7 +81,7 @@ enum TextFrontierMeasurer {
 /// size is fixed; only the orb slides as `transcript` grows.
 struct DictationWritingCaptionView: View {
     let transcript: String
-    /// Leading words rendered sharp; the tail stays blurred until confirmed.
+    /// Leading words rendered sharp; the tentative tail stays readable at a lighter weight.
     var stableWordCount: Int = 0
     let level: Double
     let palette: DictationPillPalette
@@ -217,12 +217,12 @@ struct DictationWritingCaptionView: View {
         } else if parts.stable.isEmpty {
             Text(parts.provisional)
                 .font(font)
-                .foregroundStyle(palette.captionText.opacity(0.42))
+                .foregroundStyle(palette.captionText.opacity(0.72))
         } else {
             (Text(parts.stable)
                 .foregroundStyle(palette.captionText.opacity(0.9))
                 + Text(" " + parts.provisional)
-                .foregroundStyle(palette.captionText.opacity(0.42)))
+                .foregroundStyle(palette.captionText.opacity(0.72)))
                 .font(font)
         }
     }

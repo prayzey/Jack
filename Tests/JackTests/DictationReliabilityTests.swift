@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import AVFoundation
 import SwiftUI
 import XCTest
@@ -82,21 +83,24 @@ final class DictationReliabilityTests: XCTestCase {
     func testClipboardRestorationPreservesNewCopiesAndHandlesEmptyClipboard() async throws {
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
-        let service = DictationPasteService(pasteboard: board, postPaste: { true })
+        let service = DictationPasteService(pasteboard: board, postPaste: { true }, targetIsCurrent: { _ in true })
         board.setString("before", forType: .string)
-        XCTAssertTrue(service.paste(text: "dictation"))
+        let pasted4102 = await service.paste(text: "dictation", target: testTarget)
+        XCTAssertTrue(pasted4102)
         board.clearContents()
         board.setString("a newer copy", forType: .string)
         try await Task.sleep(for: .milliseconds(420))
         XCTAssertEqual(board.string(forType: .string), "a newer copy")
 
         board.clearContents()
-        XCTAssertTrue(service.paste(text: "temporary"))
+        let pasted4402 = await service.paste(text: "temporary", target: testTarget)
+        XCTAssertTrue(pasted4402)
         try await Task.sleep(for: .milliseconds(420))
         XCTAssertNil(board.string(forType: .string))
 
         board.setString("before", forType: .string)
-        XCTAssertTrue(service.paste(text: "dictation"))
+        let pasted4618 = await service.paste(text: "dictation", target: testTarget)
+        XCTAssertTrue(pasted4618)
         try await Task.sleep(for: .milliseconds(420))
         XCTAssertEqual(board.string(forType: .string), "before")
     }
@@ -105,10 +109,15 @@ final class DictationReliabilityTests: XCTestCase {
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
         board.setString("before", forType: .string)
-        let service = DictationPasteService(pasteboard: board, postPaste: { false })
-        XCTAssertFalse(service.paste(text: "keep these words"))
+        let service = DictationPasteService(pasteboard: board, postPaste: { false }, targetIsCurrent: { _ in true })
+        let pasted = await service.paste(text: "keep these words", target: testTarget)
+        XCTAssertFalse(pasted)
         try await Task.sleep(for: .milliseconds(420))
         XCTAssertEqual(board.string(forType: .string), "keep these words")
+    }
+
+    private var testTarget: DictationPasteTarget {
+        DictationPasteTarget(pid: 1, element: AXUIElementCreateApplication(1), valueDigest: SHA256.hash(data: Data()), selection: nil)
     }
 
     private func renderIfRequested(coordinator: DictationCoordinator, store: DictationStore, name: String) throws {

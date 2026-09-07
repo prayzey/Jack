@@ -29,6 +29,8 @@ final class MeetingTranscriptionService {
             engine = ParakeetTranscriptionEngine(modelURL: modelFileURL)
         case .parakeetUnifiedStream:
             engine = TranscribeCppStreamingEngine(modelURL: modelFileURL)
+        case .appleSpeech:
+            engine = AppleSpeechTranscriptionEngine()
         case .whisperSmallMultilingual:
             engine = WhisperTranscriptionEngine(engine: engineID, modelURL: modelFileURL)
         }

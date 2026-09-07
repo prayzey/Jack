@@ -17,7 +17,7 @@ let package = Package(
         // public Hugging Face repos at runtime — nothing self-hosted.
         .package(url: "https://github.com/argmaxinc/WhisperKit.git", from: "0.16.0"),
         .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.13.6"),
-        .package(url: "https://github.com/obra/LLM.swift.git", branch: "main"),
+        .package(url: "https://github.com/obra/LLM.swift.git", revision: "c2144e1a0e29c280ec6080b7da85e876d51f8509"),
         // Ogg-Opus decoder. WhatsApp/Telegram/Signal voice notes ship as
         // Ogg-encapsulated Opus, which AVFoundation can't read — this converts
         // them to .m4a so the existing WhisperKit/FluidAudio file path works.

@@ -348,6 +348,8 @@ struct MeetingModelSettingsView: View {
             return "English · fast · ~650 MB · Apple Neural Engine"
         case .parakeetUnifiedStream:
             return "English · live streaming · ~731 MB · GPU"
+        case .appleSpeech:
+            return L10n.string("dictation.model.appleDetail", default: "On-device · Uses your Mac's language · macOS manages storage")
         case .whisperSmallMultilingual:
             return "Multilingual · ~466 MB"
         }

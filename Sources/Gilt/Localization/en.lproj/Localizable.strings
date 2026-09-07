@@ -1045,3 +1045,36 @@
 "dictation.overlay.copied" = "Copied — ready to paste";
 "dictation.overlay.pasteSent" = "Paste sent";
 "dictation.overlay.transcript" = "Live transcript";
+
+/* Dictation streaming and recovery */
+"dictation.model.apple" = "Apple Speech";
+"dictation.model.appleDetail" = "On-device · Uses your Mac's language · macOS manages storage";
+"dictation.model.selected" = "Selected";
+"dictation.model.use" = "Use";
+"dictation.polish.engine" = "Polish engine";
+"dictation.error.appleLanguage" = "Apple Speech is unavailable for this Mac's language. Choose the English speech model in Settings → Dictate.";
+"dictation.error.overloaded" = "Speech processing couldn't keep up. Copy your draft and try a shorter dictation.";
+"dictation.error.deviceChanged" = "The microphone changed or disconnected. Copy your draft, check your microphone, and try again.";
+"dictation.error.sleep" = "Dictation stopped because your Mac went to sleep. You can copy the draft below.";
+"dictation.error.finalizeTimeout" = "Finishing the transcript took too long. Copy your draft and try again.";
+"dictation.error.inputTooLong" = "The text is too long for the local AI model.";
+"dictation.error.outputLimit" = "The local AI response exceeded its limit.";
+"dictation.overlay.manualPaste" = "Press ⌘V where you want the text.";
+"dictation.overlay.durationLimit" = "Dictation finishes automatically at 10 minutes.";
+"dictation.overlay.endingSoon" = "Ends at 10:00";
+"dictation.history.save" = "Save recent dictations";
+"dictation.history.privacy" = "Keep the last 100 dictations on this Mac. Turning this off stops new saves. Audio is never saved.";
+"dictation.history.title" = "Recent dictations";
+"dictation.history.clear" = "Clear all";
+"dictation.history.empty" = "No recent dictations";
+"dictation.history.emptyHint" = "Your finished dictations appear here when saving is on. You can copy the original words or the finished text.";
+"dictation.history.copied" = "Copied";
+"dictation.history.copy" = "Copy text";
+"dictation.history.delete" = "Delete dictation";
+"dictation.history.original" = "Original transcript";
+"dictation.history.copyOriginal" = "Copy original";
+"dictation.history.tab" = "Recent";
+"dictation.history.blurb" = "Recover your words and control what stays on this Mac.";
+"dictation.overlay.polishSkipped" = "AI cleanup skipped; your transcript is preserved.";
+"dictation.paste.automatic" = "Paste automatically";
+"dictation.paste.destination" = "If you change apps, edit the field, or move the cursor, Jack copies the text for you instead.";

@@ -94,9 +94,7 @@ struct DictationOverlayView: View {
             cancelButton
             DictationLevelMeter(level: coordinator.level, color: captionFrontierColor)
                 .accessibilityHidden(true)
-            Text(coordinator.isPreparing
-                 ? L10n.string("dictation.overlay.starting", default: "Starting…")
-                 : L10n.string("dictation.overlay.listening", default: "Listening"))
+            Text(recordingStatus)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(palette.captionText.opacity(0.8))
             Spacer(minLength: 4)
@@ -104,6 +102,7 @@ struct DictationOverlayView: View {
                 .font(.system(size: 11, weight: .medium).monospacedDigit())
                 .foregroundStyle(palette.captionText.opacity(0.7))
                 .accessibilityLabel(L10n.string("dictation.overlay.duration", default: "Recording duration"))
+                .help(L10n.string("dictation.overlay.durationLimit", default: "Dictation finishes automatically at 10 minutes."))
             Button(action: onStop) {
                 Image(systemName: "checkmark")
                     .font(.system(size: 11, weight: .bold))
@@ -118,6 +117,14 @@ struct DictationOverlayView: View {
         }
         .padding(.horizontal, 10)
         .frame(height: DictationCaptionLayout.controlBarHeight)
+    }
+
+    private var recordingStatus: String {
+        if coordinator.isPreparing { return L10n.string("dictation.overlay.starting", default: "Starting…") }
+        if coordinator.elapsedSeconds >= DictationAudioCaptureService.maximumDurationSeconds - 30 {
+            return L10n.string("dictation.overlay.endingSoon", default: "Ends at 10:00")
+        }
+        return L10n.string("dictation.overlay.listening", default: "Listening")
     }
 
     private var finishLabel: String {
@@ -155,7 +162,7 @@ struct DictationOverlayView: View {
             HStack(spacing: 12) {
                 if !coordinator.liveTranscript.isEmpty {
                     Button(L10n.string("dictation.overlay.copyDraft", default: "Copy draft")) {
-                        DictationPasteService().copyOnly(coordinator.liveTranscript)
+                        DictationPasteService().copyOnly(coordinator.liveTranscript, saveToHistory: store.settings.saveToClipboardHistory)
                         coordinator.cancelSession()
                     }
                 }
@@ -222,10 +229,24 @@ struct DictationOverlayView: View {
                 .foregroundStyle(captionFrontierColor)
                 .scaleEffect(reduceMotion || doneAppeared ? 1 : 0.4)
 
-            Text(doneLabel)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(doneLabel)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(palette.captionText.opacity(0.92))
+                if coordinator.lastResultWasCopied {
+                    Text(L10n.string("dictation.overlay.manualPaste", default: "Press ⌘V where you want the text."))
+                        .font(.system(size: 11))
+                        .foregroundStyle(palette.captionText.opacity(0.8))
+                }
+                if coordinator.polishWasSkipped {
+                    Text(L10n.string("dictation.overlay.polishSkipped", default: "AI cleanup skipped; your transcript is preserved."))
+                        .font(.system(size: 11))
+                        .foregroundStyle(palette.captionText.opacity(0.8))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
         }
+        .padding(.horizontal, 12)
         .frame(
             width: DictationCaptionLayout.captionWidth,
             height: DictationCaptionLayout.cardHeight

@@ -34,6 +34,7 @@ final class DictationComposeWindowManager: NSObject, NSWindowDelegate {
     /// The app the user was in before opening compose, captured so "Paste into
     /// the last app" can reactivate it and send the text there.
     private weak var previousApp: NSRunningApplication?
+    private var previousTarget: Task<DictationPasteTarget?, Never>?
 
     func configure(coordinator: DictationCoordinator, clipboardStore: ClipboardStore) {
         self.coordinator = coordinator
@@ -59,6 +60,9 @@ final class DictationComposeWindowManager: NSObject, NSWindowDelegate {
         // Remember who was frontmost so paste-into-app can return there.
         if !NSApp.isActive {
             previousApp = NSWorkspace.shared.frontmostApplication
+            if let pid = previousApp?.processIdentifier {
+                previousTarget = Task.detached { DictationPasteTarget.capture(pid: pid) }
+            }
         }
 
         // Route compose-mode dictations into the editor while the window is up.
@@ -114,7 +118,7 @@ final class DictationComposeWindowManager: NSObject, NSWindowDelegate {
             // Let the previous app come frontmost before the synthetic Cmd+V,
             // otherwise the keystroke lands on whatever is still in front.
             try? await Task.sleep(nanoseconds: 120_000_000)
-            pasteService.paste(text: text, restorePasteboard: false)
+            await pasteService.paste(text: text, restorePasteboard: false, target: await previousTarget?.value)
         }
     }
 

@@ -16,6 +16,7 @@ final class MeetingModelManager: ObservableObject {
     @Published private(set) var transcriptionStates: [MeetingTranscriptionEngine: MeetingModelDownloadState] = [:]
     @Published private(set) var summarizationState: MeetingModelDownloadState = .missing
     @Published private(set) var activeDownloads: Set<String> = []
+    private var transcriptionDownloads: [MeetingTranscriptionEngine: Task<Void, Error>] = [:]
 
     private let modelsRoot: URL
     private let transcriptionService: MeetingTranscriptionService?
@@ -34,7 +35,15 @@ final class MeetingModelManager: ObservableObject {
 
     func refreshAll() {
         for engine in MeetingTranscriptionEngine.allCases {
+            guard !activeDownloads.contains(engine.rawValue) else { continue }
             transcriptionStates[engine] = inferTranscriptionState(for: engine)
+            if let native = transcriptionService?.engine(for: engine) as? AppleSpeechTranscriptionEngine {
+                Task {
+                    await native.refreshAvailability()
+                    guard !activeDownloads.contains(engine.rawValue) else { return }
+                    transcriptionStates[engine] = native.isReady ? .ready : .missing
+                }
+            }
         }
         let cacheDir = MeetingAppSupportLocator.summarizationModelFolder(
             engine: .qwen35_4b_q4,
@@ -75,7 +84,10 @@ final class MeetingModelManager: ObservableObject {
     /// callbacks (instead of a static 0%).
     func downloadTranscriptionModel(_ engine: MeetingTranscriptionEngine) async {
         guard activeDownloads.insert(engine.rawValue).inserted else { return }
-        defer { activeDownloads.remove(engine.rawValue) }
+        defer {
+            activeDownloads.remove(engine.rawValue)
+            transcriptionDownloads[engine] = nil
+        }
 
         transcriptionStates[engine] = .downloading(progress: 0, receivedBytes: 0)
 
@@ -85,17 +97,29 @@ final class MeetingModelManager: ObservableObject {
         }
         let engineInstance = service.engine(for: engine)
         let totalBytes = engine.approximateDownloadSizeBytes
-        do {
+        let download = Task {
             try await engineInstance.prefetch { [weak self] fraction in
                 guard let self else { return }
                 let bytes = Int64(fraction * Double(totalBytes))
                 self.transcriptionStates[engine] = .downloading(progress: fraction, receivedBytes: bytes)
             }
+        }
+        transcriptionDownloads[engine] = download
+        do {
+            try await withTaskCancellationHandler { try await download.value } onCancel: { download.cancel() }
             transcriptionStates[engine] = .ready
         } catch {
+            if download.isCancelled {
+                transcriptionStates[engine] = inferTranscriptionState(for: engine)
+                return
+            }
             logger.error("Transcription prefetch failed for \(engine.rawValue): \(error.localizedDescription)")
             transcriptionStates[engine] = .failed(reason: error.localizedDescription)
         }
+    }
+
+    func cancelTranscriptionDownload(_ engine: MeetingTranscriptionEngine) {
+        transcriptionDownloads[engine]?.cancel()
     }
 
     /// Downloads + loads the Qwen summary model. LLM.swift gives us real

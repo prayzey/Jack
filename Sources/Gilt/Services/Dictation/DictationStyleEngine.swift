@@ -38,6 +38,8 @@ final class DictationStyleEngine {
         formatLists: Bool = false,
         formatParagraphs: Bool = false,
         screenContextTerms: [String] = [],
+        timeoutSeconds: Double = 5,
+        onFallback: (@MainActor () -> Void)? = nil,
         onPartial: (@MainActor (String) -> Void)? = nil
     ) async -> String {
         let trimmed = rawTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -50,16 +52,11 @@ final class DictationStyleEngine {
             return trimmed
         }
 
-        // Only run the LLM if the model is already on disk. We don't kick off
-        // a 2GB download as a side effect of someone holding the dictation key.
-        do {
-            let ready = try await llm.ensureLoadedFromCache(cacheDirectory: cacheDirectory)
-            guard ready else {
-                logger.info("Qwen not cached — returning raw transcript")
-                return trimmed
-            }
-        } catch {
-            logger.error("Qwen cache check failed: \(error.localizedDescription) — returning raw transcript")
+        // Warm in the background; a cold multi-second load must not hold up
+        // delivery. Subsequent live passes use it once it is ready.
+        guard llm.isLoaded else {
+            Task { try? await llm.ensureLoadedFromCache(cacheDirectory: cacheDirectory) }
+            onFallback?()
             return trimmed
         }
 
@@ -88,20 +85,49 @@ final class DictationStyleEngine {
             let output = try await llm.generate(
                 prompt: prompt,
                 maxOutputCharacters: cap,
+                outputBudgetText: trimmed,
+                timeoutSeconds: timeoutSeconds,
                 onPartial: partialSink
             )
             var cleaned = Self.cleanOutput(output, original: trimmed)
             if formatLists {
                 cleaned = Self.normalizeInlineNumberedList(cleaned)
             }
-            return cleaned.isEmpty ? trimmed : cleaned
+            let checked = Self.validatedOutput(cleaned, original: trimmed)
+            if checked == trimmed, cleaned != trimmed { onFallback?() }
+            return checked
         } catch {
+            onFallback?()
             logger.error("Qwen post-process failed: \(error.localizedDescription) — returning raw transcript")
             return trimmed
         }
     }
 
     // MARK: - Prompts (ported from Openwhisp)
+
+    /// ponytail: conservative loss detection, not semantic equivalence. Keep
+    /// the original when a rewrite loses literals or most of a long passage.
+    static func validatedOutput(_ output: String, original: String) -> String {
+        guard !output.isEmpty, output != "...", output != "…" else { return original }
+        let inputWords = LiveCaptionComposer.wordCount(original)
+        let correction = ["i meant", "i mean", "didn't mean", "scratch that", "wait no", "no sorry"]
+            .contains { original.localizedCaseInsensitiveContains($0) }
+        if !correction, inputWords >= 20, LiveCaptionComposer.wordCount(output) < inputWords / 2 { return original }
+        let pattern = #"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}|https?://[^\s<>]+|\b\d+(?:[.,]\d+)*\b|\b[\w.-]+(?:/[\w.-]+)+|\b[A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]+\b"#
+        guard let matcher = try? NSRegularExpression(pattern: pattern) else { return original }
+        func literals(_ text: String) -> [String: Int] {
+            var counts: [String: Int] = [:]
+            for match in matcher.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+                guard let range = Range(match.range, in: text) else { continue }
+                let literal = String(text[range]).lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ".,;!?)"))
+                counts[literal, default: 0] += 1
+            }
+            return counts
+        }
+        let outputLiterals = literals(output)
+        guard literals(original).allSatisfy({ outputLiterals[$0.key, default: 0] >= $0.value }) else { return original }
+        return output
+    }
 
     /// Built as a `static` method (with no instance dependencies) so unit
     /// tests can inspect the produced prompt without spinning up a real

@@ -48,6 +48,7 @@ enum AppleIntelligencePolisher {
     /// unavailable or the request fails for any reason.
     static func polish(
         prompt: String,
+        timeoutSeconds: Double = 5,
         onPartial: (@MainActor (String) -> Void)? = nil
     ) async -> String? {
         #if canImport(FoundationModels)
@@ -56,14 +57,17 @@ enum AppleIntelligencePolisher {
         guard case .available = model.availability else { return nil }
         let session = LanguageModelSession(model: model)
         do {
-            var latest = ""
-            // Snapshots are cumulative — assign, never append.
-            let stream = session.streamResponse(to: prompt)
-            for try await snapshot in stream {
-                latest = snapshot.content
-                onPartial?(latest)
+            var accepting = true
+            let output = try await GenerationDeadline.run(seconds: timeoutSeconds, onStop: { accepting = false }) {
+                var latest = ""
+                for try await snapshot in session.streamResponse(to: prompt) {
+                    guard accepting else { return "" }
+                    latest = snapshot.content
+                    onPartial?(latest)
+                }
+                return latest
             }
-            return latest.isEmpty ? nil : latest
+            return output.isEmpty ? nil : output
         } catch {
             logger.error("Apple Intelligence polish failed: \(error.localizedDescription)")
             return nil

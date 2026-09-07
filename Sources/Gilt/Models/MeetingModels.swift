@@ -67,6 +67,7 @@ enum MeetingTranscriptionEngine: String, Codable, CaseIterable, Identifiable {
     case parakeetFlash = "parakeet-realtime-eou-120m-v1"
     case parakeetV2 = "parakeet-tdt-0.6b-v2"
     case parakeetUnifiedStream = "parakeet-unified-en-0.6b"
+    case appleSpeech = "apple-speech-analyzer"
     case whisperSmallMultilingual = "whisper-small-multilingual"
 
     var id: String { rawValue }
@@ -75,16 +76,21 @@ enum MeetingTranscriptionEngine: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .parakeetFlash, .parakeetV2: return "English speech model"
         case .parakeetUnifiedStream: return "English streaming model (beta)"
+        case .appleSpeech: return L10n.string("dictation.model.apple", default: "Apple Speech")
         case .whisperSmallMultilingual: return "Multilingual speech model"
         }
     }
 
-    /// The dictation engine. Dictation is single-model: the NVIDIA unified
-    /// streaming model. (Meetings keep their own engine selection.)
+    /// Preserve the existing default until a broader comparison supports changing it.
     static let dictationEngine: MeetingTranscriptionEngine = .parakeetUnifiedStream
 
     /// Engines shown in Settings → Dictate → Advanced.
-    static let dictationEngines: [MeetingTranscriptionEngine] = [.parakeetUnifiedStream]
+    static var dictationEngines: [MeetingTranscriptionEngine] {
+        if #available(macOS 26, *) { return [.parakeetUnifiedStream, .appleSpeech] }
+        return [.parakeetUnifiedStream]
+    }
+
+    var supportsNativeStreaming: Bool { self == .parakeetUnifiedStream || self == .appleSpeech }
 
     /// Engines listed in the Meetings model panel.
     static let meetingEngines: [MeetingTranscriptionEngine] = [.parakeetV2, .whisperSmallMultilingual]
@@ -94,7 +100,8 @@ enum MeetingTranscriptionEngine: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .parakeetFlash: return 250_000_000
         case .parakeetV2: return 650_000_000
-        case .parakeetUnifiedStream: return 731_000_000
+        case .parakeetUnifiedStream: return 731_357_568
+        case .appleSpeech: return 0 // Managed by macOS; varies by language.
         case .whisperSmallMultilingual: return 488_000_000
         }
     }
@@ -105,6 +112,7 @@ enum MeetingTranscriptionEngine: String, Codable, CaseIterable, Identifiable {
         case .parakeetFlash: return "streaming_encoder.mlmodelc"
         case .parakeetV2: return "parakeet-tdt-0.6b-v2.mlx"
         case .parakeetUnifiedStream: return "parakeet-unified-en-0.6b-Q8_0.gguf"
+        case .appleSpeech: return "system-managed"
         case .whisperSmallMultilingual: return "ggml-small.bin"
         }
     }
@@ -114,8 +122,8 @@ enum MeetingTranscriptionEngine: String, Codable, CaseIterable, Identifiable {
     var directDownloadURL: URL? {
         switch self {
         case .parakeetUnifiedStream:
-            return URL(string: "https://huggingface.co/handy-computer/parakeet-unified-en-0.6b-gguf/resolve/main/parakeet-unified-en-0.6b-Q8_0.gguf")
-        case .parakeetFlash, .parakeetV2, .whisperSmallMultilingual:
+            return URL(string: "https://huggingface.co/handy-computer/parakeet-unified-en-0.6b-gguf/resolve/7e948f21b7bdbac698d3318db9d350f1096f3b6c/parakeet-unified-en-0.6b-Q8_0.gguf")
+        case .parakeetFlash, .parakeetV2, .whisperSmallMultilingual, .appleSpeech:
             return nil
         }
     }
@@ -354,6 +362,31 @@ struct MeetingSession: Codable, Identifiable, Equatable {
 
 // MARK: - Transcript
 
+/// Native streaming engines replace a cumulative hypothesis. Only committed
+/// words may enter a rewrite; a tentative tail can change length or disappear.
+struct StreamingTranscriptUpdate: Codable, Equatable, Sendable {
+    var committed: String
+    var tentative: String = ""
+    /// All text in this update is confirmed. The stream ending, rather than
+    /// this flag, determines when recording finalization is complete.
+    var isFinal: Bool = false
+
+    var text: String {
+        (committed + tentative).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// transcribe.cpp commits raw UTF-8 prefixes, which can end inside a
+    /// word. Preserve its exact join and keep that unfinished word out of AI.
+    var confirmedText: String {
+        if isFinal || committed.last?.isWhitespace == true || tentative.first?.isWhitespace == true {
+            return committed
+        }
+        if tentative.isEmpty, let last = committed.last, ".!?。！？".contains(last) { return committed }
+        guard let boundary = committed.lastIndex(where: \.isWhitespace) else { return "" }
+        return String(committed[...boundary])
+    }
+}
+
 /// A single segment of transcript. We store these as line-delimited JSON
 /// (`transcript.jsonl`) so writes during long meetings can append cheaply.
 struct MeetingTranscriptChunk: Codable, Identifiable, Equatable {
@@ -363,19 +396,23 @@ struct MeetingTranscriptChunk: Codable, Identifiable, Equatable {
     var text: String
     /// Engine that produced this chunk, useful for mixed-language meetings.
     var engineRaw: String
+    /// Nil for ordinary time-slice chunks and older saved transcripts.
+    var streamingUpdate: StreamingTranscriptUpdate?
 
     init(
         chunkID: UUID = UUID(),
         startTimeSeconds: Double,
         endTimeSeconds: Double,
         text: String,
-        engineRaw: String
+        engineRaw: String,
+        streamingUpdate: StreamingTranscriptUpdate? = nil
     ) {
         self.chunkID = chunkID
         self.startTimeSeconds = startTimeSeconds
         self.endTimeSeconds = endTimeSeconds
         self.text = text
         self.engineRaw = engineRaw
+        self.streamingUpdate = streamingUpdate
     }
 
     var id: UUID { chunkID }

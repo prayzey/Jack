@@ -45,6 +45,7 @@ struct DictationSettingsView: View {
         case appearance
         case style
         case context
+        case history
         case advanced
 
         var id: String { rawValue }
@@ -55,6 +56,7 @@ struct DictationSettingsView: View {
             case .appearance: return "Appearance"
             case .style:      return "Style"
             case .context:    return "Context"
+            case .history:    return L10n.string("dictation.history.tab", default: "Recent")
             case .advanced:   return "Advanced"
             }
         }
@@ -69,6 +71,8 @@ struct DictationSettingsView: View {
                 return "Optional AI polish. Turn rough speech into clean text in the voice you pick."
             case .context:
                 return "Let Jack peek at what's on screen so it spells names, code, and jargon right."
+            case .history:
+                return L10n.string("dictation.history.blurb", default: "Recover your words and control what stays on this Mac.")
             case .advanced:
                 return "Engine, paste behaviour, history, and the master enable switch."
             }
@@ -88,12 +92,17 @@ struct DictationSettingsView: View {
                 case .appearance: appearanceSection
                 case .style:      styleSubTabSection
                 case .context:    screenContextSubTabSection
+                case .history:    DictationHistoryView()
                 case .advanced:   advancedAndModelSection
                 }
             }
             .transition(.opacity)
             .id(subTab)
         }
+    }
+
+    init(initialTab: DictateSubTab = .shortcut) {
+        _subTab = State(initialValue: initialTab)
     }
 
     // MARK: - Sub-tab picker
@@ -1130,10 +1139,10 @@ struct DictationSettingsView: View {
                         )
                     )
 
-                    if store.settings.livePolishEnabled {
+                    Group {
                         VStack(alignment: .leading, spacing: 12) {
                             HStack(alignment: .firstTextBaseline) {
-                                Text(L10n.string("ui.live.polish.engine", default: "Live polish engine"))
+                                Text(L10n.string("dictation.polish.engine", default: "Polish engine"))
                                     .font(.system(size: 14, weight: .medium))
                                     .foregroundStyle(SettingsTheme.textPrimary)
                                 Spacer()
@@ -1237,9 +1246,7 @@ struct DictationSettingsView: View {
         }
     }
 
-    /// The single dictation model card: NVIDIA logo, one metadata line, and
-    /// the download / delete action. No picker chrome since there is exactly
-    /// one model.
+    /// Each ready model exposes an explicit selection action.
     @ViewBuilder
     private func modelCard(for engine: MeetingTranscriptionEngine) -> some View {
         let state = modelManager.transcriptionState(for: engine)
@@ -1248,16 +1255,37 @@ struct DictationSettingsView: View {
             HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 5) {
                     HStack(spacing: 8) {
-                        nvidiaLogo
+                        if engine == .appleSpeech {
+                            Label(engine.displayName, systemImage: "apple.logo")
+                                .font(.system(size: 13, weight: .semibold))
+                        } else {
+                            nvidiaLogo
+                        }
                         statusBadge(for: state)
                     }
-                    Text("English · \(formattedModelSize(engine.approximateDownloadSizeBytes))")
+                    Text(engine == .appleSpeech
+                         ? L10n.string("dictation.model.appleDetail", default: "On-device · Uses your Mac's language · macOS manages storage")
+                         : "English · \(formattedModelSize(engine.approximateDownloadSizeBytes))")
                         .font(.system(size: 11))
                         .foregroundStyle(SettingsTheme.textTertiary)
                 }
 
                 Spacer(minLength: 8)
 
+                if case .ready = state {
+                    Button {
+                        store.settings.speechEngine = engine
+                    } label: {
+                        Label(
+                            store.settings.speechEngine == engine
+                                ? L10n.string("dictation.model.selected", default: "Selected")
+                                : L10n.string("dictation.model.use", default: "Use"),
+                            systemImage: store.settings.speechEngine == engine ? "checkmark.circle.fill" : "circle"
+                        )
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(store.settings.speechEngine == engine)
+                }
                 modelAction(for: state, engine: engine)
             }
             .padding(.horizontal, 18)
@@ -1278,6 +1306,7 @@ struct DictationSettingsView: View {
                     .padding(.bottom, 14)
             }
         }
+        .foregroundStyle(SettingsTheme.textPrimary)
     }
 
     @ViewBuilder
@@ -1352,10 +1381,12 @@ struct DictationSettingsView: View {
             .buttonStyle(.bordered)
             .controlSize(.small)
         case .downloading:
-            ProgressView()
-                .controlSize(.small)
+            Button(L10n.string("ui.cancel", default: "Cancel")) {
+                modelManager.cancelTranscriptionDownload(engine)
+            }
+            .buttonStyle(.borderless)
         case .ready:
-            Button {
+            if engine != .appleSpeech { Button {
                 modelManager.deleteModel(engine)
             } label: {
                 Image(systemName: "trash")
@@ -1364,6 +1395,7 @@ struct DictationSettingsView: View {
             .buttonStyle(.borderless)
             .help("Remove downloaded model")
             .foregroundStyle(SettingsTheme.textTertiary)
+            }
         }
     }
 
@@ -1385,8 +1417,8 @@ struct DictationSettingsView: View {
                 SettingsDivider()
 
                 SettingsToggleRow(
-                    title: "Paste into active app",
-                    subtitle: "Type the transcript directly into the frontmost application.",
+                    title: L10n.string("dictation.paste.automatic", default: "Paste automatically"),
+                    subtitle: L10n.string("dictation.paste.destination", default: "If you change apps, edit the field, or move the cursor, Jack copies the text for you instead."),
                     icon: "doc.on.clipboard",
                     isOn: Binding(
                         get: { store.settings.autoPasteIntoActiveApp },
@@ -1702,4 +1734,3 @@ private struct HoverableTermRow: View {
         }
     }
 }
-

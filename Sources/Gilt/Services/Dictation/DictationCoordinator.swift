@@ -26,15 +26,21 @@ final class DictationCoordinator: ObservableObject {
     @Published private(set) var isPreparing = false
     @Published private(set) var elapsedSeconds: Double = 0
     @Published private(set) var lastResultWasCopied = false
+    @Published private(set) var polishWasSkipped = false
     private var meterTask: Task<Void, Never>?
     private var sessionID: UUID?
+    private var finalizationTimeoutTask: Task<Void, Never>?
+    private var pasteTargetTask: Task<DictationPasteTarget?, Never>?
+    private var sessionTargetApp: (bundleID: String, displayName: String)?
+    private var sessionTargetPID: pid_t?
+    private var sleepObserver: NSObjectProtocol?
     /// Rolling partial transcript — accumulates as the engine yields finalized
     /// chunks during the listening phase. Empty until the first chunk lands.
     /// This is what makes the pill feel "live" rather than buffered:
     /// the user sees their words appearing under the grid as they speak.
     @Published private(set) var liveTranscript: String = ""
     /// How many leading words in `liveTranscript` are visually confirmed (sharp).
-    /// The remainder renders blurred until the next streaming revision locks them.
+    /// The remaining words stay readable in a lighter shade until confirmed.
     @Published private(set) var liveTranscriptStableWordCount: Int = 0
 
     /// Most recent completed dictation. The view layer can show "Done — pasted"
@@ -98,7 +104,7 @@ final class DictationCoordinator: ObservableObject {
     /// Which model backs this session's polish passes. Decided once at
     /// session start: Qwen on machines with memory headroom, the Apple
     /// Intelligence system model on 8 GB Macs (out-of-process, ~zero app
-    /// memory). Nil = no live polish this session.
+    /// memory). The same choice governs the final pass; nil preserves the transcript.
     private enum PolishProvider { case qwen, appleIntelligence }
     private var livePolishProvider: PolishProvider?
     /// Re-polishes completed sentences while the user is still speaking so
@@ -107,6 +113,7 @@ final class DictationCoordinator: ObservableObject {
     /// Latest cumulative streaming transcript — what `livePolisher.compose`
     /// splices its polished prefix into when a pass lands.
     private var currentLiveRaw = ""
+    private var currentLiveCommitted = ""
     private var sessionTask: Task<Void, Never>?
     private var screenContextTask: Task<[String]?, Never>?
     /// Parallel task used only by `.askScreen` mode. Captures the full raw
@@ -137,6 +144,18 @@ final class DictationCoordinator: ObservableObject {
 
     init(audio: DictationAudioCaptureService = DictationAudioCaptureService()) {
         self.audio = audio
+        sleepObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.willSleepNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.isActive, self.phase != .done else { return }
+                self.fail(reason: L10n.string("dictation.error.sleep", default: "Dictation stopped because your Mac went to sleep. You can copy the draft below."))
+            }
+        }
+    }
+
+    isolated deinit {
+        if let sleepObserver { NSWorkspace.shared.notificationCenter.removeObserver(sleepObserver) }
     }
 
     func attach(store: DictationStore) {
@@ -180,10 +199,16 @@ final class DictationCoordinator: ObservableObject {
         guard !isActive else { return }
         let id = UUID()
         sessionID = id
+        sessionTargetApp = TranscriptionStatsStore.frontmostAppSnapshot()
+        sessionTargetPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        if mode == .polish || mode == .askScreen, let pid = sessionTargetPID {
+            pasteTargetTask = Task.detached { DictationPasteTarget.capture(pid: pid) }
+        }
         isPreparing = true
         elapsedSeconds = 0
         lastResult = nil
         lastResultWasCopied = false
+        polishWasSkipped = false
         sessionStartedAt = Date()
         liveTranscript = ""
         liveTranscriptStableWordCount = 0
@@ -284,6 +309,12 @@ final class DictationCoordinator: ObservableObject {
         // will propagate through the engine's transcribeStream and let the
         // final chunk land before we move on to polish/paste.
         phase = .transcribing
+        let id = sessionID
+        finalizationTimeoutTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(15))
+            guard let self, !Task.isCancelled, self.sessionID == id, self.phase == .transcribing else { return }
+            self.fail(reason: L10n.string("dictation.error.finalizeTimeout", default: "Finishing the transcript took too long. Copy your draft and try again."))
+        }
         audio.stop()
         // Bring other audio back up as soon as we stop listening — the user
         // shouldn't have to wait through transcription + polish + paste to
@@ -350,6 +381,14 @@ final class DictationCoordinator: ObservableObject {
                       self.phase == .listening else { return }
                 self.level = self.audio.level
                 self.elapsedSeconds = self.audio.elapsedSeconds
+                if let error = self.audio.failure {
+                    self.fail(reason: error.localizedDescription)
+                    return
+                }
+                if self.elapsedSeconds >= DictationAudioCaptureService.maximumDurationSeconds {
+                    self.stopSession()
+                    return
+                }
             }
         }
 
@@ -360,9 +399,10 @@ final class DictationCoordinator: ObservableObject {
         // catching up.
         // Respect the user's engine pick from Settings → Dictate → Advanced;
         // normalize legacy / meeting-only selections back to the default.
-        let speechEngine = MeetingTranscriptionEngine.normalizedDictationEngine(store.settings.speechEngine)
+        let speechEngine = MeetingTranscriptionEngine.normalizedDictationEngine(settings.speechEngine)
         store.settings.speechEngine = speechEngine
         let engine = ensureEngine(for: speechEngine)
+        if let native = engine as? AppleSpeechTranscriptionEngine { await native.refreshAvailability() }
 
         // Guardrail: warmUp() will silently kick off a Hugging Face download
         // if the model isn't on disk yet. That can mean hundreds of MB
@@ -386,6 +426,9 @@ final class DictationCoordinator: ObservableObject {
             correctionStore: correctionStore,
             screenTerms: liveScreenContextTerms
         )
+        if let native = engine as? AppleSpeechTranscriptionEngine {
+            native.vocabularyHints = Array(sessionWeightedTerms.map(\.canonical).prefix(100))
+        }
         let styleEngine = DictationStyleEngine(cacheDirectory: store.qwenCacheURL)
         setUpLivePolisher(settings: settings, speechEngine: speechEngine, styleEngine: styleEngine)
         let liveScreenTermsTask = screenContextTask
@@ -411,31 +454,18 @@ final class DictationCoordinator: ObservableObject {
         for try await chunk in chunkStream {
             if Task.isCancelled { return }
             let windowText = chunk.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if speechEngine == .parakeetUnifiedStream {
-                // Native streaming model: each chunk is the *cumulative*
-                // transcript (committed + tentative), so replace instead of
-                // window-merging. The last couple of words are the model's
-                // still-tentative suffix — style them as provisional.
-                liveAccumulated = windowText
-                currentLiveRaw = windowText
-                livePolisher?.ingest(windowText)
-                if let state = livePolisher?.compose(cumulativeRaw: windowText) {
-                    // Polished prefix + raw suffix — the suffix is already
-                    // cleaned inside compose, and the polished part must not
-                    // go through the filler cleaner again.
-                    publishLiveCaption(state, skipCleanup: true)
-                } else {
-                    // Display everything sharp. The engine still treats the
-                    // last two words as tentative internally (the polisher
-                    // must not touch them), but rendering them faded read as
-                    // lag — the user watched their freshest words sit dimmed
-                    // until the next word arrived.
-                    let words = windowText.split(separator: " ").count
-                    publishLiveCaption(LiveCaptionComposer.State(
-                        text: windowText,
-                        stableWordCount: words
-                    ))
-                }
+            if let update = chunk.streamingUpdate {
+                liveAccumulated = update.text
+                currentLiveRaw = update.text
+                currentLiveCommitted = update.confirmedText
+                livePolisher?.ingest(committedRaw: update.confirmedText)
+                let state = livePolisher?.compose(
+                    cumulativeRaw: update.text, committedRaw: update.confirmedText
+                ) ?? LiveCaptionComposer.State(
+                    text: update.text,
+                    stableWordCount: LiveCaptionComposer.wordCount(update.confirmedText)
+                )
+                publishLiveCaption(state, force: update.isFinal, skipCleanup: true)
                 continue
             }
             guard !windowText.isEmpty else { continue }
@@ -451,6 +481,11 @@ final class DictationCoordinator: ObservableObject {
 
         if Task.isCancelled { return }
 
+        finalizationTimeoutTask?.cancel()
+        finalizationTimeoutTask = nil
+        if let error = audio.failure { throw error }
+        elapsedSeconds = audio.elapsedSeconds
+
         // Native streaming has already finalized, including an empty result.
         // Windowed engines may still need a full decode.
         let collected = audio.collectedSamples
@@ -461,7 +496,7 @@ final class DictationCoordinator: ObservableObject {
             return
         }
         let oneShotRawFromEngine: String
-        if speechEngine == .parakeetUnifiedStream {
+        if speechEngine.supportsNativeStreaming {
             // The streaming decode IS the canonical transcript for the
             // unified model — the final chunk already drained the
             // decoder's right context. A second full decode would only
@@ -596,8 +631,9 @@ final class DictationCoordinator: ObservableObject {
                 if settings.formatLists {
                     cleaned = DictationStyleEngine.normalizeInlineNumberedList(cleaned)
                 }
-                polished = cleaned.isEmpty ? raw : cleaned
-            } else {
+                polished = DictationStyleEngine.validatedOutput(cleaned, original: raw)
+                polishWasSkipped = output == nil || (polished == raw && cleaned != raw)
+            } else if livePolishProvider == .qwen {
                 polished = await styleEngine.process(
                     rawTranscript: raw,
                     style: settings.style,
@@ -608,6 +644,10 @@ final class DictationCoordinator: ObservableObject {
                     formatLists: settings.formatLists,
                     formatParagraphs: settings.formatParagraphs,
                     screenContextTerms: contextTerms,
+                    onFallback: { [weak self] in
+                        guard let self, self.sessionID == id, self.phase == .rewriting else { return }
+                        self.polishWasSkipped = true
+                    },
                     // Stream the rewrite into the overlay so the user watches
                     // their raw words heal into the polished version instead of
                     // staring at a frozen transcript behind "Polishing…".
@@ -616,6 +656,9 @@ final class DictationCoordinator: ObservableObject {
                         self.publishPolishPreview(preview)
                     }
                 )
+            } else {
+                polished = raw
+                polishWasSkipped = true
             }
         } else {
             polished = raw
@@ -654,7 +697,7 @@ final class DictationCoordinator: ObservableObject {
             // Duration must be read before resetToIdle() nils sessionStartedAt.
             Analytics.dictationCompleted(
                 mode: DictationMode.compose.rawValue,
-                durationSeconds: sessionStartedAt.map { Date().timeIntervalSince($0) } ?? 0
+                durationSeconds: audio.elapsedSeconds
             )
             resetToIdle()
             touchActivity()
@@ -662,16 +705,11 @@ final class DictationCoordinator: ObservableObject {
             return
         }
 
-        // Capture the target app BEFORE paste — pasting deactivates Jack and
-        // brings the previously-frontmost app forward, but the stats store
-        // needs to attribute the dictation to whichever app the user was in
-        // when they spoke. After paste, our own process can briefly be
-        // frontmost again, which would wrongly bucket dictations under "Jack".
-        let targetApp = TranscriptionStatsStore.frontmostAppSnapshot()
-        // Same moment, capture the pid too — the correction learner needs
-        // it to read the AX value of the focused element later. Stored
-        // alongside the stats snapshot so the two stay in sync.
-        let targetPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        // Attribute delivery and learning to the destination captured before
+        // recording, even if focus moved while recognition was finishing.
+        let targetApp = sessionTargetApp
+        // Learning only starts after a paste to this unchanged destination.
+        let targetPID = sessionTargetPID
 
         // Paste and/or save. When `saveToClipboardHistory` is on we skip the
         // pasteboard restore — the dictation text stays on the clipboard so
@@ -679,15 +717,19 @@ final class DictationCoordinator: ObservableObject {
         // user has both auto-paste and history off, copyOnly() at least lets
         // them Cmd+V manually.
         phase = .pasting
+        let copied: Bool
         if settings.autoPasteIntoActiveApp {
-            lastResultWasCopied = !paste.paste(
+            copied = await !paste.paste(
                 text: finalText,
-                restorePasteboard: !settings.saveToClipboardHistory
+                restorePasteboard: !settings.saveToClipboardHistory,
+                target: await pasteTargetTask?.value
             )
         } else {
-            paste.copyOnly(finalText)
-            lastResultWasCopied = true
+            paste.copyOnly(finalText, saveToHistory: settings.saveToClipboardHistory)
+            copied = true
         }
+        guard !Task.isCancelled, sessionID == id else { return }
+        lastResultWasCopied = copied
 
         lastResult = finalText
         // Brief "Pasted" beat in the overlay before teardown. Duration must
@@ -695,7 +737,7 @@ final class DictationCoordinator: ObservableObject {
         // reset-first order recorded every dictation as 0 seconds.
         phase = .done
 
-        let duration = sessionStartedAt.map { Date().timeIntervalSince($0) } ?? 0
+        let duration = audio.elapsedSeconds
         Analytics.dictationCompleted(mode: currentMode.rawValue, durationSeconds: duration)
         let entry = DictationHistoryEntry(
             text: finalText,
@@ -733,7 +775,7 @@ final class DictationCoordinator: ObservableObject {
         // Hold the done state just long enough to register, then tear down.
         // Guarded so a cancel/new session that already moved the phase
         // doesn't get yanked back to idle underneath the user.
-        try? await Task.sleep(nanoseconds: 500_000_000)
+        try? await Task.sleep(for: .seconds((lastResultWasCopied || polishWasSkipped) ? 3 : 0.7))
         if !Task.isCancelled, sessionID == id, case .done = phase {
             resetToIdle()
         }
@@ -805,6 +847,7 @@ final class DictationCoordinator: ObservableObject {
     /// for stats, history entry, paste vs copy depending on settings — so
     /// askScreen feels like a first-class dictation flow, not a side branch.
     private func runAskScreen(question: String, store: DictationStore) async throws {
+        let id = sessionID
         let settings = store.settings
 
         // 1. The raw transcript needs minimal cleanup before becoming a
@@ -861,23 +904,27 @@ final class DictationCoordinator: ObservableObject {
         // record history + stats. The history entry stores the *question*
         // as the raw transcript and the *answer* as the final text, so the
         // user can re-read both in dictation history.
-        let targetApp = TranscriptionStatsStore.frontmostAppSnapshot()
+        let targetApp = sessionTargetApp
 
         phase = .pasting
+        let copied: Bool
         if settings.autoPasteIntoActiveApp {
-            lastResultWasCopied = !paste.paste(
+            copied = await !paste.paste(
                 text: finalText,
-                restorePasteboard: !settings.saveToClipboardHistory
+                restorePasteboard: !settings.saveToClipboardHistory,
+                target: await pasteTargetTask?.value
             )
         } else {
-            paste.copyOnly(finalText)
-            lastResultWasCopied = true
+            paste.copyOnly(finalText, saveToHistory: settings.saveToClipboardHistory)
+            copied = true
         }
+        guard !Task.isCancelled, sessionID == id else { return }
+        lastResultWasCopied = copied
 
         lastResult = finalText
         // Duration must be read before resetToIdle() nils sessionStartedAt —
         // the old reset-first order recorded every ask-screen dictation as 0s.
-        let duration = sessionStartedAt.map { Date().timeIntervalSince($0) } ?? 0
+        let duration = audio.elapsedSeconds
         resetToIdle()
 
         Analytics.dictationCompleted(mode: DictationMode.askScreen.rawValue, durationSeconds: duration)
@@ -935,6 +982,7 @@ final class DictationCoordinator: ObservableObject {
         livePolisher = nil
         livePolishProvider = nil
         currentLiveRaw = ""
+        currentLiveCommitted = ""
         // Only the polish/compose flows paste the transcript; actions and
         // ask-screen use it as a command/question, so live polish would just
         // burn the model. Level `.none` means "don't rewrite wording" — the
@@ -942,9 +990,8 @@ final class DictationCoordinator: ObservableObject {
         let wantsLivePolish = settings.livePolishEnabled
             && settings.postProcessEnabled
             && settings.level != .none
-            && speechEngine == .parakeetUnifiedStream
+            && speechEngine.supportsNativeStreaming
             && (currentMode == .polish || currentMode == .compose)
-        guard wantsLivePolish else { return }
         switch settings.livePolishEngine {
         case .automatic:
             if Self.hasLivePolishMemoryHeadroom {
@@ -959,7 +1006,7 @@ final class DictationCoordinator: ObservableObject {
         case .appleIntelligence:
             livePolishProvider = AppleIntelligencePolisher.isAvailable ? .appleIntelligence : nil
         }
-        guard let provider = livePolishProvider else { return }
+        guard wantsLivePolish, let provider = livePolishProvider else { return }
 
         // Mirrors steps 5–7 of the final pipeline (vocab → pre-clean →
         // filler cleanup) so a live-polished prefix is byte-equal to what
@@ -984,7 +1031,8 @@ final class DictationCoordinator: ObservableObject {
                     style: style,
                     level: level,
                     formatLists: false,
-                    formatParagraphs: false
+                    formatParagraphs: false,
+                    timeoutSeconds: 2
                 )
             }
         case .appleIntelligence:
@@ -997,11 +1045,11 @@ final class DictationCoordinator: ObservableObject {
                     screenContextTerms: [],
                     transcript: input
                 )
-                guard let output = await AppleIntelligencePolisher.polish(prompt: prompt) else {
+                guard let output = await AppleIntelligencePolisher.polish(prompt: prompt, timeoutSeconds: 2) else {
                     return input
                 }
                 let cleaned = DictationStyleEngine.cleanOutput(output, original: input)
-                return cleaned.isEmpty ? input : cleaned
+                return DictationStyleEngine.validatedOutput(cleaned, original: input)
             }
         }
         // Warm Qwen now, while the user is still speaking — otherwise the
@@ -1014,7 +1062,7 @@ final class DictationCoordinator: ObservableObject {
         let polisher = LiveDictationPolisher(prepare: prepare, polishChunk: polishChunk)
         polisher.onUpdate = { [weak self] in
             guard let self, self.sessionID == id, case .listening = self.phase else { return }
-            guard let state = self.livePolisher?.compose(cumulativeRaw: self.currentLiveRaw) else { return }
+            guard let state = self.livePolisher?.compose(cumulativeRaw: self.currentLiveRaw, committedRaw: self.currentLiveCommitted) else { return }
             self.publishLiveCaption(state, force: true, skipCleanup: true)
         }
         livePolisher = polisher
@@ -1029,7 +1077,7 @@ final class DictationCoordinator: ObservableObject {
         skipCleanup: Bool = false
     ) {
         let now = CACurrentMediaTime()
-        if !force, now - lastCaptionPublishAt < 0.25 {
+        if !force, now - lastCaptionPublishAt < 0.08 {
             // Trailing-edge flush. The ASR helper only emits when the text
             // changes, so a debounce-dropped chunk is gone until the user
             // says another word — the caption visibly lags one word behind
@@ -1037,7 +1085,7 @@ final class DictationCoordinator: ObservableObject {
             // dropped state once the debounce window passes.
             pendingCaptionFlushTask?.cancel()
             pendingCaptionFlushTask = Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 260_000_000)
+                try? await Task.sleep(nanoseconds: 80_000_000)
                 guard let self, !Task.isCancelled else { return }
                 guard case .listening = self.phase else { return }
                 self.publishLiveCaption(raw, force: true, skipCleanup: skipCleanup)
@@ -1068,6 +1116,8 @@ final class DictationCoordinator: ObservableObject {
     }
 
     private func fail(reason: String) {
+        sessionTask?.cancel()
+        finalizationTimeoutTask?.cancel()
         audio.stop(immediately: true)
         meterTask?.cancel()
         meterTask = nil
@@ -1082,6 +1132,12 @@ final class DictationCoordinator: ObservableObject {
     }
 
     private func resetToIdle() {
+        finalizationTimeoutTask?.cancel()
+        finalizationTimeoutTask = nil
+        pasteTargetTask?.cancel()
+        pasteTargetTask = nil
+        sessionTargetApp = nil
+        sessionTargetPID = nil
         sessionID = nil
         audio.stop(immediately: true)
         meterTask?.cancel()
@@ -1097,6 +1153,7 @@ final class DictationCoordinator: ObservableObject {
         livePolisher = nil
         livePolishProvider = nil
         currentLiveRaw = ""
+        currentLiveCommitted = ""
         pendingCaptionFlushTask?.cancel()
         pendingCaptionFlushTask = nil
         liveTranscript = ""
@@ -1189,7 +1246,7 @@ final class DictationCoordinator: ObservableObject {
 
     /// Release Parakeet/Whisper AND Qwen. Setting the speech engine to
     /// `nil` lets Swift's ARC drop FluidAudio's `AsrManager` + cached
-    /// models; Qwen has its own `unload()` that shuts down llama.cpp's
+    /// models; Qwen has its own guarded `unload()` that shuts down llama.cpp's
     /// backend cleanly. Safe to call when nothing is loaded.
     private func unloadEngines() {
         if engine != nil {

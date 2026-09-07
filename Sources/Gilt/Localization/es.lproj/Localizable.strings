@@ -1035,3 +1035,36 @@
 "dictation.overlay.copied" = "Copiado — listo para pegar";
 "dictation.overlay.pasteSent" = "Pegado solicitado";
 "dictation.overlay.transcript" = "Transcripción en directo";
+
+/* Dictation streaming and recovery */
+"dictation.model.apple" = "Apple Speech";
+"dictation.model.appleDetail" = "En el dispositivo · Usa el idioma del Mac · macOS gestiona el almacenamiento";
+"dictation.model.selected" = "Seleccionado";
+"dictation.model.use" = "Usar";
+"dictation.polish.engine" = "Motor de mejora";
+"dictation.error.appleLanguage" = "Apple Speech no está disponible para el idioma de este Mac. Elige el modelo de voz en inglés en Ajustes → Dictar.";
+"dictation.error.overloaded" = "El reconocimiento de voz no pudo seguir el ritmo. Copia el borrador e intenta un dictado más corto.";
+"dictation.error.deviceChanged" = "El micrófono cambió o se desconectó. Copia el borrador, revisa el micrófono e inténtalo de nuevo.";
+"dictation.error.sleep" = "El dictado se detuvo porque tu Mac entró en reposo. Puedes copiar el borrador de abajo.";
+"dictation.error.finalizeTimeout" = "La transcripción tardó demasiado en finalizar. Copia el borrador e inténtalo de nuevo.";
+"dictation.error.inputTooLong" = "El texto es demasiado largo para el modelo de IA local.";
+"dictation.error.outputLimit" = "La respuesta de la IA local superó su límite.";
+"dictation.overlay.manualPaste" = "Pulsa ⌘V donde quieras insertar el texto.";
+"dictation.overlay.durationLimit" = "El dictado finaliza automáticamente a los 10 minutos.";
+"dictation.overlay.endingSoon" = "Termina a los 10:00";
+"dictation.history.save" = "Guardar dictados recientes";
+"dictation.history.privacy" = "Conserva los últimos 100 dictados en este Mac. Al desactivarlo, se dejan de guardar nuevos dictados. El audio nunca se guarda.";
+"dictation.history.title" = "Dictados recientes";
+"dictation.history.clear" = "Borrar todo";
+"dictation.history.empty" = "No hay dictados recientes";
+"dictation.history.emptyHint" = "Los dictados terminados aparecen aquí cuando el guardado está activado. Puedes copiar las palabras originales o el texto final.";
+"dictation.history.copied" = "Copiado";
+"dictation.history.copy" = "Copiar texto";
+"dictation.history.delete" = "Eliminar dictado";
+"dictation.history.original" = "Transcripción original";
+"dictation.history.copyOriginal" = "Copiar original";
+"dictation.history.tab" = "Recientes";
+"dictation.history.blurb" = "Recupera tus palabras y decide qué se guarda en este Mac.";
+"dictation.overlay.polishSkipped" = "Se omitió la mejora con IA; tu transcripción se conserva.";
+"dictation.paste.automatic" = "Pegar automáticamente";
+"dictation.paste.destination" = "Si cambias de app, editas el campo o mueves el cursor, Jack copia el texto para que lo pegues.";

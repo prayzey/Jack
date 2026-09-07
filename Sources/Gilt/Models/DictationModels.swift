@@ -377,6 +377,8 @@ struct DictationSettings: Codable, Equatable {
     /// Save each dictation as a clip in history so the user can re-grab it
     /// from the Jack window if a paste fails.
     var saveToClipboardHistory: Bool = true
+    /// Independent from clipboard history; switching off stops future saves.
+    var saveDictationHistory: Bool = true
     /// Auto-paste into the frontmost app after transcription.
     var autoPasteIntoActiveApp: Bool = true
     /// Color scheme for the floating dictation pill + caption surface.
@@ -495,7 +497,7 @@ struct DictationSettings: Codable, Equatable {
     // MARK: - Engine idle unload
 
     /// On-device speech engine for dictation (always the English TDT model).
-    var speechEngine: MeetingTranscriptionEngine = .parakeetV2
+    var speechEngine: MeetingTranscriptionEngine = .dictationEngine
 
     /// How long the loaded Parakeet/Whisper/Qwen engines stay in memory after
     /// the last dictation finishes. Inspired by Handy's `model_unload_timeout`:
@@ -590,7 +592,7 @@ extension DictationSettings {
     // synthesized decoder would throw on a missing key and wipe everything.
     enum CodingKeys: String, CodingKey {
         case isEnabled, shortcut, postProcessEnabled, livePolishEnabled, livePolishEngine, style, level
-        case saveToClipboardHistory, autoPasteIntoActiveApp
+        case saveToClipboardHistory, saveDictationHistory, autoPasteIntoActiveApp
         case pillTheme, duckOtherAudio, duckAmount
         case enabledVocabPacks, customVocabulary
         case packTermAdditions, packTermRemovals
@@ -616,6 +618,7 @@ extension DictationSettings {
         self.style = try c.decodeIfPresent(DictationStyle.self, forKey: .style) ?? .conversation
         self.level = try c.decodeIfPresent(DictationLevel.self, forKey: .level) ?? .soft
         self.saveToClipboardHistory = try c.decodeIfPresent(Bool.self, forKey: .saveToClipboardHistory) ?? true
+        self.saveDictationHistory = try c.decodeIfPresent(Bool.self, forKey: .saveDictationHistory) ?? true
         self.autoPasteIntoActiveApp = try c.decodeIfPresent(Bool.self, forKey: .autoPasteIntoActiveApp) ?? true
         self.pillTheme = try c.decodeIfPresent(DictationPillTheme.self, forKey: .pillTheme) ?? .obsidian
         self.duckOtherAudio = try c.decodeIfPresent(Bool.self, forKey: .duckOtherAudio) ?? false

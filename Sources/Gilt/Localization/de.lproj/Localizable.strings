@@ -1035,3 +1035,36 @@
 "dictation.overlay.copied" = "Kopiert — bereit zum Einfügen";
 "dictation.overlay.pasteSent" = "Einfügen angefordert";
 "dictation.overlay.transcript" = "Live-Transkript";
+
+/* Dictation streaming and recovery */
+"dictation.model.apple" = "Apple Speech";
+"dictation.model.appleDetail" = "Auf diesem Mac · Verwendet die Mac-Sprache · macOS verwaltet den Speicher";
+"dictation.model.selected" = "Ausgewählt";
+"dictation.model.use" = "Verwenden";
+"dictation.polish.engine" = "Modell zur Textüberarbeitung";
+"dictation.error.appleLanguage" = "Apple Speech ist für die Sprache dieses Mac nicht verfügbar. Wähle das englische Sprachmodell unter Einstellungen → Diktieren.";
+"dictation.error.overloaded" = "Die Spracherkennung konnte nicht Schritt halten. Kopiere den Entwurf und versuche ein kürzeres Diktat.";
+"dictation.error.deviceChanged" = "Das Mikrofon wurde gewechselt oder getrennt. Kopiere den Entwurf, prüfe das Mikrofon und versuche es erneut.";
+"dictation.error.sleep" = "Das Diktat wurde durch den Ruhezustand des Mac beendet. Du kannst den Entwurf unten kopieren.";
+"dictation.error.finalizeTimeout" = "Das Fertigstellen der Transkription dauerte zu lange. Kopiere den Entwurf und versuche es erneut.";
+"dictation.error.inputTooLong" = "Der Text ist zu lang für das lokale KI-Modell.";
+"dictation.error.outputLimit" = "Die Antwort der lokalen KI hat das Limit überschritten.";
+"dictation.overlay.manualPaste" = "Drücke ⌘V an der gewünschten Stelle.";
+"dictation.overlay.durationLimit" = "Das Diktat endet automatisch nach 10 Minuten.";
+"dictation.overlay.endingSoon" = "Endet bei 10:00";
+"dictation.history.save" = "Letzte Diktate speichern";
+"dictation.history.privacy" = "Speichert die letzten 100 Diktate auf diesem Mac. Ausschalten verhindert neue Einträge. Audio wird nie gespeichert.";
+"dictation.history.title" = "Letzte Diktate";
+"dictation.history.clear" = "Alle löschen";
+"dictation.history.empty" = "Keine letzten Diktate";
+"dictation.history.emptyHint" = "Abgeschlossene Diktate erscheinen hier, wenn Speichern aktiviert ist. Du kannst die ursprünglichen Worte oder den fertigen Text kopieren.";
+"dictation.history.copied" = "Kopiert";
+"dictation.history.copy" = "Text kopieren";
+"dictation.history.delete" = "Diktat löschen";
+"dictation.history.original" = "Ursprüngliche Transkription";
+"dictation.history.copyOriginal" = "Original kopieren";
+"dictation.history.tab" = "Letzte";
+"dictation.history.blurb" = "Finde deine Worte wieder und bestimme, was auf diesem Mac gespeichert bleibt.";
+"dictation.overlay.polishSkipped" = "KI-Überarbeitung übersprungen; deine Transkription bleibt erhalten.";
+"dictation.paste.automatic" = "Automatisch einfügen";
+"dictation.paste.destination" = "Wenn du die App wechselst, das Feld bearbeitest oder den Cursor bewegst, kopiert Jack den Text zum manuellen Einfügen.";

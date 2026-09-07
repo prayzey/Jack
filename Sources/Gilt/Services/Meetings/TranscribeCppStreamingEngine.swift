@@ -1,5 +1,6 @@
 @preconcurrency import AVFoundation
 import Foundation
+import CryptoKit
 import OSLog
 
 /// Speech-to-text engine backed by transcribe.cpp's `parakeet-unified-en-0.6b`
@@ -19,6 +20,8 @@ import OSLog
 final class TranscribeCppStreamingEngine: MeetingTranscriptionEngineProtocol {
     let engineID: MeetingTranscriptionEngine = .parakeetUnifiedStream
 
+    nonisolated static let expectedModelSHA256 = "4b50b6dd862bf6e346929aaf4f5eaacec003bfa3f56462d6c874b41ef2f38795"
+    private var verifiedModificationDate: Date?
     private let modelURL: URL
     private let helperExecutableURL: URL?
     private let logger = Logger(subsystem: AppBrand.logSubsystem, category: "TranscribeCppEngine")
@@ -49,16 +52,15 @@ final class TranscribeCppStreamingEngine: MeetingTranscriptionEngineProtocol {
     }
 
     var isReady: Bool {
-        // This is a presence/header check. Successful helper finalization is
-        // checked separately; a valid header does not prove a complete model.
+        // Cheap size/header check for UI. warmUp verifies the pinned digest,
+        // and the stream separately requires successful helper finalization.
         Self.modelFileIsValid(at: modelURL) && helperExecutableURL != nil
     }
 
-    /// A model file we're willing to load: present, nonzero, and starting
-    /// with the ASCII GGUF magic (`0x47 0x47 0x55 0x46`). Reads 4 bytes, so
-    /// it's cheap enough for the `isReady` main-path check.
+    /// Readiness requires the exact pinned size and a GGUF header. Full
+    /// checksum verification stays off the UI actor in warmUp and download.
     nonisolated static func modelFileIsValid(at url: URL) -> Bool {
-        fileSize(at: url) > 0 && ggufMagicIsValid(at: url)
+        fileSize(at: url) == MeetingTranscriptionEngine.parakeetUnifiedStream.approximateDownloadSizeBytes && ggufMagicIsValid(at: url)
     }
 
     nonisolated static func fileSize(at url: URL) -> Int64 {
@@ -78,7 +80,13 @@ final class TranscribeCppStreamingEngine: MeetingTranscriptionEngineProtocol {
         guard isReady else {
             throw MeetingTranscriptionError.modelMissing(engine: engineID)
         }
-        // The helper loads the GGUF when a session starts.
+        let modified = try modelURL.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        guard modified != verifiedModificationDate || verifiedModificationDate == nil else { return }
+        let url = modelURL
+        let check = Task.detached(priority: .userInitiated) { try Self.modelIntegrityMatches(at: url) }
+        let valid = try await withTaskCancellationHandler { try await check.value } onCancel: { check.cancel() }
+        guard valid else { throw MeetingTranscriptionError.modelDownloadFailed(engine: engineID) }
+        verifiedModificationDate = modified
     }
 
     // MARK: - Download
@@ -91,86 +99,73 @@ final class TranscribeCppStreamingEngine: MeetingTranscriptionEngineProtocol {
     /// GGUF magic bytes all check out. Any failure deletes the partial so a
     /// retry starts clean.
     func prefetch(reportingProgress: @MainActor @Sendable @escaping (Double) -> Void) async throws {
-        if Self.modelFileIsValid(at: modelURL) {
-            reportingProgress(1.0)
+        if Self.modelFileIsValid(at: modelURL), (try? await warmUp()) != nil {
+            reportingProgress(1)
             return
         }
+        try Task.checkCancellation()
         guard let remote = engineID.directDownloadURL else {
             throw MeetingTranscriptionError.modelMissing(engine: engineID)
         }
-        let parentDir = modelURL.deletingLastPathComponent()
-        try FileManager.default.createDirectory(at: parentDir, withIntermediateDirectories: true)
-
-        // A stale partial (nonzero but invalid) from an earlier failed run
-        // would block the move below — clear it before we start.
-        if FileManager.default.fileExists(atPath: modelURL.path) {
-            try? FileManager.default.removeItem(at: modelURL)
+        let directory = modelURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let requiredBytes = engineID.approximateDownloadSizeBytes * 2
+        if let available = meetingVolumeImportantCapacity(at: directory), available < requiredBytes {
+            throw MeetingTranscriptionError.insufficientDiskSpace(requiredBytes: requiredBytes, availableBytes: available)
         }
-
-        let expectedSize = engineID.approximateDownloadSizeBytes
-        // FIX 5: fail fast if the volume can't hold the model (+20% headroom
-        // for the temp copy that lives alongside the final file during the move).
-        let requiredBytes = Int64(Double(expectedSize) * 1.2)
-        if let available = meetingVolumeImportantCapacity(at: parentDir), available < requiredBytes {
-            throw MeetingTranscriptionError.insufficientDiskSpace(
-                requiredBytes: requiredBytes,
-                availableBytes: available
-            )
-        }
-
+        let staged = directory.appendingPathComponent(".download-\(UUID()).gguf")
+        defer { try? FileManager.default.removeItem(at: staged) }
         var request = URLRequest(url: remote)
-        request.setValue("Jack/1.0", forHTTPHeaderField: "User-Agent")
         request.timeoutInterval = 1800
-
-        let destination = modelURL
-        let engine = engineID
-        let observerHolder = QwenProgressObserverHolder<QwenProgressObserver>()
-        let (received, expected): (Int64, Int64) = try await withCheckedThrowingContinuation { continuation in
-            let task = URLSession.shared.downloadTask(with: request) { tempURL, response, error in
-                defer { observerHolder.clear() }
-                if let error {
-                    continuation.resume(throwing: error)
-                    return
+        request.setValue("Jack/1.0", forHTTPHeaderField: "User-Agent")
+        let observer = QwenProgressObserverHolder<QwenProgressObserver>()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                let task = URLSession.shared.downloadTask(with: request) { temporary, response, error in
+                    defer { observer.clear() }
+                    do {
+                        if let error { throw error }
+                        guard let temporary, let http = response as? HTTPURLResponse,
+                              (200..<300).contains(http.statusCode),
+                              try Self.modelIntegrityMatches(at: temporary) else {
+                            throw MeetingTranscriptionError.modelDownloadFailed(engine: .parakeetUnifiedStream)
+                        }
+                        try FileManager.default.moveItem(at: temporary, to: staged)
+                        continuation.resume()
+                    } catch { continuation.resume(throwing: error) }
                 }
-                guard let http = response as? HTTPURLResponse,
-                      (200..<300).contains(http.statusCode) else {
-                    continuation.resume(throwing: MeetingTranscriptionError.modelDownloadFailed(engine: engine))
-                    return
-                }
-                guard let tempURL else {
-                    continuation.resume(throwing: MeetingTranscriptionError.modelDownloadFailed(engine: engine))
-                    return
-                }
-                let received = Self.fileSize(at: tempURL)
-                let expected = response?.expectedContentLength ?? expectedSize
-                do {
-                    if FileManager.default.fileExists(atPath: destination.path) {
-                        try FileManager.default.removeItem(at: destination)
-                    }
-                    try FileManager.default.moveItem(at: tempURL, to: destination)
-                    continuation.resume(returning: (received, expected))
-                } catch {
-                    continuation.resume(throwing: error)
-                }
+                observer.store(QwenProgressObserver(task: task) { fraction, _ in
+                    Task { @MainActor in reportingProgress(min(0.99, fraction)) }
+                }, task: task)
+                task.resume()
             }
-            observerHolder.store(QwenProgressObserver(task: task) { fraction, _ in
-                Task { @MainActor in reportingProgress(min(0.999, fraction)) }
-            })
-            task.resume()
+        } onCancel: { observer.cancel() }
+        try Task.checkCancellation()
+        // Publish only a fully verified file; interrupted downloads never
+        // replace an existing model or masquerade as Ready.
+        if FileManager.default.fileExists(atPath: modelURL.path) {
+            _ = try FileManager.default.replaceItemAt(modelURL, withItemAt: staged)
+        } else {
+            try FileManager.default.moveItem(at: staged, to: modelURL)
         }
+        verifiedModificationDate = try modelURL.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        reportingProgress(1)
+    }
 
-        // Integrity gate: reject a truncated body, then confirm the GGUF magic
-        // so a complete-but-corrupt file (hijacked redirect, HTML error page)
-        // can't masquerade as the model.
-        if expected > 0, Double(received) / Double(expected) < 0.98 {
-            try? FileManager.default.removeItem(at: destination)
-            throw MeetingTranscriptionError.modelDownloadFailed(engine: engineID)
+    nonisolated static func modelIntegrityMatches(
+        at url: URL,
+        expectedBytes: Int64 = MeetingTranscriptionEngine.parakeetUnifiedStream.approximateDownloadSizeBytes,
+        expectedSHA256: String = expectedModelSHA256
+    ) throws -> Bool {
+        guard fileSize(at: url) == expectedBytes else { return false }
+        let file = try FileHandle(forReadingFrom: url)
+        defer { try? file.close() }
+        var hash = SHA256()
+        while let data = try file.read(upToCount: 1_048_576), !data.isEmpty {
+            try Task.checkCancellation()
+            hash.update(data: data)
         }
-        guard Self.modelFileIsValid(at: destination) else {
-            try? FileManager.default.removeItem(at: destination)
-            throw MeetingTranscriptionError.modelDownloadFailed(engine: engineID)
-        }
-        reportingProgress(1.0)
+        return hash.finalize().map { String(format: "%02x", $0) }.joined() == expectedSHA256
     }
 
     // MARK: - Streaming
@@ -220,8 +215,9 @@ final class TranscribeCppStreamingEngine: MeetingTranscriptionEngineProtocol {
                                     continuation.yield(MeetingTranscriptChunk(
                                         startTimeSeconds: 0,
                                         endTimeSeconds: 0,
-                                        text: update.trimmingCharacters(in: .whitespacesAndNewlines),
-                                        engineRaw: engineRaw
+                                        text: update.text,
+                                        engineRaw: engineRaw,
+                                        streamingUpdate: update
                                     ))
                                 }
                             } catch {
@@ -274,7 +270,7 @@ final class TranscribeCppStreamingEngine: MeetingTranscriptionEngineProtocol {
                     var latest = ""
                     for try await update in session.updates() {
                         try Task.checkCancellation()
-                        latest = update
+                        latest = update.text
                     }
                     return latest
                 }
@@ -309,7 +305,7 @@ final class TranscribeCppStreamingEngine: MeetingTranscriptionEngineProtocol {
 
     // MARK: - Audio file loading
 
-    private static func loadSamples16kMono(from url: URL) throws -> [Float] {
+    static func loadSamples16kMono(from url: URL) throws -> [Float] {
         let file = try AVAudioFile(forReading: url)
         guard let targetFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
@@ -402,9 +398,7 @@ private final class TranscribeHelperSession: @unchecked Sendable {
         #endif
     }
 
-    /// Cumulative transcript per protocol line. "committed tentative" joined
-    /// for partials; the bare final text for the terminal line.
-    func updates() -> AsyncThrowingStream<String, Error> {
+    func updates() -> AsyncThrowingStream<StreamingTranscriptUpdate, Error> {
         let handle = stdoutPipe.fileHandleForReading
         return AsyncThrowingStream { continuation in
             let task = Task.detached { [self] in
@@ -420,15 +414,23 @@ private final class TranscribeHelperSession: @unchecked Sendable {
                         else { continue }
                         if let final = obj["final"] as? String {
                             receivedFinal = true
-                            continuation.yield(final)
+                            continuation.yield(StreamingTranscriptUpdate(committed: final, isFinal: true))
                         } else if obj["ready"] == nil {
                             let committed = obj["committed"] as? String ?? ""
                             let tentative = obj["tentative"] as? String ?? ""
-                            let joined = tentative.isEmpty ? committed : committed + " " + tentative
-                            continuation.yield(joined)
+                            continuation.yield(StreamingTranscriptUpdate(committed: committed, tentative: tentative))
                         }
                     }
-                    process.waitUntilExit()
+                    // waitUntilExit can strand a cooperative worker in a
+                    // Foundation run loop after the child has exited. Yield
+                    // while the exit notification lands, with a hard ceiling.
+                    let exitDeadline = ContinuousClock.now.advanced(by: .seconds(5))
+                    while process.isRunning {
+                        guard ContinuousClock.now < exitDeadline else {
+                            throw MeetingTranscriptionError.transcriptionFailed
+                        }
+                        try await Task.sleep(for: .milliseconds(10))
+                    }
                     try Task.checkCancellation()
                     guard receivedFinal, process.terminationStatus == 0 else {
                         throw MeetingTranscriptionError.transcriptionFailed

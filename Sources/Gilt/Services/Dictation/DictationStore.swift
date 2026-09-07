@@ -63,6 +63,7 @@ final class DictationStore: ObservableObject {
     // MARK: - History
 
     func appendHistory(_ entry: DictationHistoryEntry) {
+        guard settings.saveDictationHistory else { return }
         history.insert(entry, at: 0)
         if history.count > maxHistoryEntries {
             history = Array(history.prefix(maxHistoryEntries))
@@ -72,6 +73,11 @@ final class DictationStore: ObservableObject {
 
     func clearHistory() {
         history.removeAll()
+        persistHistory()
+    }
+
+    func deleteHistoryEntry(_ id: UUID) {
+        history.removeAll { $0.entryID == id }
         persistHistory()
     }
 
@@ -86,6 +92,7 @@ final class DictationStore: ObservableObject {
         do {
             let data = try JSONEncoder().encode(history)
             try data.write(to: historyURL, options: [.atomic])
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: historyURL.path)
         } catch {
             logger.error("Failed to persist dictation history: \(error.localizedDescription)")
         }

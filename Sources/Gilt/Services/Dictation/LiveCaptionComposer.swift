@@ -103,10 +103,13 @@ enum LiveCaptionComposer {
         guard !trimmed.isEmpty else {
             return State(text: raw.text, stableWordCount: raw.stableWordCount)
         }
-        let cleaned = TranscriptCleaner.clean(trimmed)
-        let cleanedWords = wordCount(cleaned)
-        let stable = min(raw.stableWordCount, cleanedWords)
-        return State(text: cleaned, stableWordCount: stable)
+        let split = splitStableProvisional(trimmed, stableWordCount: raw.stableWordCount)
+        let stable = TranscriptCleaner.clean(split.stable)
+        let provisional = TranscriptCleaner.clean(split.provisional)
+        return State(
+            text: [stable, provisional].filter { !$0.isEmpty }.joined(separator: " "),
+            stableWordCount: wordCount(stable)
+        )
     }
 
     // MARK: - Display split

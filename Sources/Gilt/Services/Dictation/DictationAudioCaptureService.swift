@@ -18,7 +18,13 @@ final class DictationAudioCaptureService {
     private let requestAccess: @MainActor () async -> Bool
 
     var level: Double { tapSink?.snapshotLevel() ?? 0 }
-    var elapsedSeconds: Double { startedAt.map { Date().timeIntervalSince($0) } ?? 0 }
+    nonisolated static let maximumDurationSeconds: Double = 600
+    var elapsedSeconds: Double {
+        Double(tapSink?.sampleCount ?? finalizedCollectedSamples.count) / targetSampleRate
+    }
+    var failure: DictationAudioError? { interruption ?? tapSink?.failure ?? streamWrapper.failure }
+    private var interruption: DictationAudioError?
+    private var configurationObserver: NSObjectProtocol?
 
     /// Async stream of mic buffers — handed to the transcription engine for
     /// the live transcription pass.
@@ -108,6 +114,7 @@ final class DictationAudioCaptureService {
             throw DictationAudioError.permissionDenied
         }
 
+        interruption = nil
         streamWrapper.reset()
         finalizedCollectedSamples = []
         tapSink = DictationAudioTapSink(
@@ -188,6 +195,15 @@ final class DictationAudioCaptureService {
             throw error
         }
 
+        configurationObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.captureID == id, self.isRecording else { return }
+                self.interruption = .deviceChanged
+                self.stop(immediately: true)
+            }
+        }
         startedAt = Date()
         isRecording = true
         logger.info("Dictation audio capture started")
@@ -303,6 +319,10 @@ final class DictationAudioCaptureService {
 
     private func finalizeStop() {
         guard isRecording else { return }
+        if let configurationObserver {
+            NotificationCenter.default.removeObserver(configurationObserver)
+            self.configurationObserver = nil
+        }
         if let engine = audioEngine {
             engine.inputNode.removeTap(onBus: bufferTapBus)
             if engine.isRunning { engine.stop() }
@@ -314,6 +334,7 @@ final class DictationAudioCaptureService {
         audioEngine = nil
         micBridge = nil
         finalizedCollectedSamples = tapSink?.drainAndSnapshot() ?? []
+        interruption = interruption ?? tapSink?.failure ?? streamWrapper.failure
         tapSink = nil
         let duration = startedAt.map { Date().timeIntervalSince($0) } ?? 0
         startedAt = nil
@@ -348,13 +369,18 @@ final class DictationAudioCaptureService {
 
 /// Resamples, collects, and streams mic buffers on a utility queue so the
 /// audio tap never hops to MainActor (~30–50 Hz).
-private final class DictationAudioTapSink: @unchecked Sendable {
-    private let queue = DispatchQueue(label: "gilt.dictation.audio", qos: .utility)
+final class DictationAudioTapSink: @unchecked Sendable {
+    private let queue: DispatchQueue
     private let targetFormat: AVAudioFormat
     private let targetSampleRate: Double
     private let streamWrapper: DictationAudioStreamWrapper
     private let lock = NSLock()
     private var collectedSamples: [Float] = []
+    private var queuedBuffers = 0
+    private var processingFailure: DictationAudioError?
+
+    var failure: DictationAudioError? { lock.withLock { processingFailure } }
+    var sampleCount: Int { lock.withLock { collectedSamples.count } }
     private var level: Double = 0
     private var resampleConverter: AVAudioConverter?
     private var resampleSourceFormat: AVAudioFormat?
@@ -363,16 +389,35 @@ private final class DictationAudioTapSink: @unchecked Sendable {
     init(
         targetFormat: AVAudioFormat,
         targetSampleRate: Double,
-        streamWrapper: DictationAudioStreamWrapper
+        streamWrapper: DictationAudioStreamWrapper,
+        queue: DispatchQueue = DispatchQueue(label: "gilt.dictation.audio", qos: .utility)
     ) {
         self.targetFormat = targetFormat
         self.targetSampleRate = targetSampleRate
         self.streamWrapper = streamWrapper
+        self.queue = queue
     }
 
     func handle(rawBuffer: AVAudioPCMBuffer) {
+        let accepted = lock.withLock {
+            guard processingFailure == nil else { return false }
+            guard queuedBuffers < 64 else {
+                processingFailure = .overloaded
+                return false
+            }
+            queuedBuffers += 1
+            return true
+        }
+        guard accepted else { return }
+        // AVAudioEngine reuses tap storage after this callback returns.
+        // Copy before leaving the callback, never inside the worker queue.
+        guard let owned = copyPCMBuffer(rawBuffer) else {
+            lock.withLock { queuedBuffers -= 1; processingFailure = .overloaded }
+            return
+        }
         queue.async { [self] in
-            self.process(rawBuffer)
+            defer { lock.withLock { queuedBuffers -= 1 } }
+            self.process(owned)
         }
     }
 
@@ -398,34 +443,43 @@ private final class DictationAudioTapSink: @unchecked Sendable {
     }
 
     private func process(_ rawBuffer: AVAudioPCMBuffer) {
-        guard let converted = convert(rawBuffer) else { return }
+        guard let converted = convert(rawBuffer) else {
+            lock.withLock { processingFailure = .overloaded }
+            return
+        }
         applySoftwareGainIfNeeded(converted)
-        streamWrapper.send(copyPCMBuffer(converted))
 
         guard let channelData = converted.floatChannelData?[0] else { return }
         let frames = Int(converted.frameLength)
         let measuredLevel = MeetingAudioCaptureService.averagePower(of: converted)
         lock.lock()
+        // Keep a hard ceiling even if the main actor is delayed. The normal
+        // session timer finishes at ten minutes; overflow reports an error.
+        guard collectedSamples.count + frames <= Int((DictationAudioCaptureService.maximumDurationSeconds + 1) * targetSampleRate) else {
+            processingFailure = .overloaded
+            lock.unlock()
+            return
+        }
         level = measuredLevel
         collectedSamples.append(contentsOf: UnsafeBufferPointer(start: channelData, count: frames))
         lock.unlock()
+        streamWrapper.send(converted)
     }
 
     private func convert(_ rawBuffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
-        if rawBuffer.format.sampleRate == targetSampleRate
-            && rawBuffer.format.channelCount == targetFormat.channelCount {
+        if rawBuffer.format == targetFormat {
             return rawBuffer
         }
         guard let resampled = AVAudioPCMBuffer(
             pcmFormat: targetFormat,
-            frameCapacity: AVAudioFrameCount(targetSampleRate)
+            frameCapacity: AVAudioFrameCount(ceil(Double(rawBuffer.frameLength) * targetSampleRate / rawBuffer.format.sampleRate)) + 32
         ) else { return nil }
         if resampleConverter == nil || resampleSourceFormat != rawBuffer.format {
             resampleConverter = AVAudioConverter(from: rawBuffer.format, to: targetFormat)
             resampleSourceFormat = rawBuffer.format
         }
         guard let converter = resampleConverter else { return nil }
-        let input = SingleUseInput(buffer: rawBuffer)
+        let input = SingleUsePCMInput(buffer: rawBuffer)
         var error: NSError?
         converter.convert(to: resampled, error: &error, withInputFrom: input.provide)
         guard error == nil else { return nil }
@@ -446,28 +500,23 @@ private final class DictationAudioTapSink: @unchecked Sendable {
         }
     }
 
-    private func copyPCMBuffer(_ source: AVAudioPCMBuffer) -> AVAudioPCMBuffer {
-        guard
-            let copy = AVAudioPCMBuffer(
-                pcmFormat: source.format,
-                frameCapacity: source.frameCapacity
-            )
-        else { return source }
+    private func copyPCMBuffer(_ source: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        guard let copy = AVAudioPCMBuffer(pcmFormat: source.format, frameCapacity: source.frameLength) else { return nil }
         copy.frameLength = source.frameLength
-        let channels = Int(source.format.channelCount)
-        let frames = Int(source.frameLength)
-        guard frames > 0,
-              let src = source.floatChannelData,
-              let dst = copy.floatChannelData else { return source }
-        for channel in 0..<channels {
-            dst[channel].update(from: src[channel], count: frames)
+        let src = UnsafeMutableAudioBufferListPointer(source.mutableAudioBufferList)
+        let dst = UnsafeMutableAudioBufferListPointer(copy.mutableAudioBufferList)
+        for index in 0..<src.count {
+            guard let from = src[index].mData, let to = dst[index].mData else { return nil }
+            memcpy(to, from, Int(src[index].mDataByteSize))
         }
         return copy
     }
+
 }
 
 enum DictationAudioError: LocalizedError {
     case permissionDenied
+    case deviceChanged, overloaded
     case noInput
     /// Engine bootstrap exceeded its timeout — almost always means coreaudiod
     /// is in a bad state. Recovery is "try again, and if that fails restart
@@ -478,6 +527,8 @@ enum DictationAudioError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .deviceChanged: return L10n.string("dictation.error.deviceChanged", default: "The microphone changed or disconnected. Copy your draft, check your microphone, and try again.")
+        case .overloaded: return L10n.string("dictation.error.overloaded", default: "Speech processing couldn't keep up. Copy your draft and try a shorter dictation.")
         case .permissionDenied: return L10n.string("dictation.error.permission", default: "Microphone access is required for dictation.")
         case .noInput: return L10n.string("dictation.error.noInput", default: "No audio input detected. Connect a mic and try again.")
         case .audioSystemUnresponsive: return L10n.string("dictation.error.audioSystem", default: "Audio system isn't responding. Try again. If it keeps happening, restart your Mac.")
@@ -502,14 +553,16 @@ private final class ContinuationLatch: @unchecked Sendable {
     }
 }
 
-private final class DictationAudioStreamWrapper: @unchecked Sendable {
+final class DictationAudioStreamWrapper: @unchecked Sendable {
     private(set) var stream: AsyncStream<AVAudioPCMBuffer>
     private let lock = NSLock()
     private var continuation: AsyncStream<AVAudioPCMBuffer>.Continuation?
+    private var overflowed = false
+    var failure: DictationAudioError? { lock.withLock { overflowed ? .overloaded : nil } }
 
     init() {
         var continuationOut: AsyncStream<AVAudioPCMBuffer>.Continuation?
-        self.stream = AsyncStream { continuation in
+        self.stream = AsyncStream(bufferingPolicy: .bufferingOldest(512)) { continuation in
             continuationOut = continuation
         }
         self.continuation = continuationOut
@@ -520,7 +573,8 @@ private final class DictationAudioStreamWrapper: @unchecked Sendable {
         defer { lock.unlock() }
         continuation?.finish()
         var continuationOut: AsyncStream<AVAudioPCMBuffer>.Continuation?
-        stream = AsyncStream { continuation in
+        overflowed = false
+        stream = AsyncStream(bufferingPolicy: .bufferingOldest(512)) { continuation in
             continuationOut = continuation
         }
         continuation = continuationOut
@@ -529,7 +583,7 @@ private final class DictationAudioStreamWrapper: @unchecked Sendable {
     func send(_ buffer: sending AVAudioPCMBuffer) {
         lock.lock()
         defer { lock.unlock() }
-        continuation?.yield(buffer)
+        if case .dropped = continuation?.yield(buffer) { overflowed = true }
     }
 
     func finish() {
@@ -540,7 +594,7 @@ private final class DictationAudioStreamWrapper: @unchecked Sendable {
     }
 }
 
-private final class SingleUseInput: @unchecked Sendable {
+final class SingleUsePCMInput: @unchecked Sendable {
     private let buffer: AVAudioPCMBuffer
     private let lock = NSLock()
     private var consumed = false

@@ -11,29 +11,44 @@ import Foundation
 /// so respecting the clipboard is the table stake.
 @MainActor
 final class DictationPasteService {
+    nonisolated static let noHistoryType = NSPasteboard.PasteboardType("dev.novor.jack.dictation.no-history")
     /// How long we hold the pasteboard hostage before restoring. Long enough
     /// for the target app to actually consume the paste, short enough to feel
     /// instant.
     private let restoreDelaySeconds: TimeInterval = 0.35
     private let pasteboard: NSPasteboard
     private let postPaste: @MainActor () -> Bool
+    private let targetIsCurrent: @MainActor (DictationPasteTarget) async -> Bool
 
-    init(pasteboard: NSPasteboard = .general, postPaste: @escaping @MainActor () -> Bool = DictationPasteService.postCmdV) {
+    init(
+        pasteboard: NSPasteboard = .general,
+        postPaste: @escaping @MainActor () -> Bool = DictationPasteService.postCmdV,
+        targetIsCurrent: @escaping @MainActor (DictationPasteTarget) async -> Bool = { await $0.isCurrent() }
+    ) {
         self.pasteboard = pasteboard
         self.postPaste = postPaste
+        self.targetIsCurrent = targetIsCurrent
     }
 
     /// Paste `text` into the frontmost non-Jack application. Cmd+V fires
     /// immediately; pasteboard restore runs in the background so dictation
     /// doesn't block on a 350ms hold (FluidVoice-style instant handoff).
     @discardableResult
-    func paste(text: String, restorePasteboard: Bool = true) -> Bool {
+    func paste(text: String, restorePasteboard: Bool = true, target: DictationPasteTarget?) async -> Bool {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+
+        let mayPaste: Bool
+        if let target { mayPaste = await targetIsCurrent(target) }
+        else { mayPaste = false }
+        guard !Task.isCancelled else { return false }
+        guard mayPaste else {
+            copyOnly(text, saveToHistory: !restorePasteboard)
+            return false
+        }
 
         let previousItems = restorePasteboard ? snapshotPasteboard(pasteboard) : nil
 
-        pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
+        copyOnly(text, saveToHistory: !restorePasteboard)
         let transcriptChangeCount = pasteboard.changeCount
         // If paste cannot be requested, leave the result available for Cmd+V.
         guard postPaste() else { return false }
@@ -50,10 +65,13 @@ final class DictationPasteService {
 
     /// Quietly write `text` to the pasteboard with no Cmd+V — used when
     /// auto-paste is disabled.
-    func copyOnly(_ text: String) {
+    func copyOnly(_ text: String, saveToHistory: Bool = true) {
         guard !text.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        let item = NSPasteboardItem()
+        item.setString(text, forType: .string)
+        if !saveToHistory { item.setData(Data(), forType: Self.noHistoryType) }
         pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
+        pasteboard.writeObjects([item])
     }
 
     // MARK: - Pasteboard stash/restore

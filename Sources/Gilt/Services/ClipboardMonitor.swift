@@ -125,6 +125,9 @@ struct CapturedClip: Sendable {
     /// any content-aware rendering (creative previews, smart categorization) must handle both
     /// ClipType paths. See `CreativeTextPattern.detect()` comments for the rendering side.
     static func fromPasteboard(_ pasteboard: NSPasteboard) -> CapturedClip? {
+        // Temporary dictation handoffs and copy-only fallbacks must honor the
+        // user's history opt-out even when polling catches the clipboard early.
+        guard pasteboard.types?.contains(DictationPasteService.noHistoryType) != true else { return nil }
         let startedAt = DispatchTime.now()
 
         if let pngData = pasteboard.data(forType: .png) {

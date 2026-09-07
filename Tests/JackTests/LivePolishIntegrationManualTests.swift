@@ -8,10 +8,24 @@ import XCTest
 ///   swift test --filter LivePolishIntegrationManualTests
 @MainActor
 final class LivePolishIntegrationManualTests: XCTestCase {
+    override class func tearDown() {
+        // The test runner exits immediately after this suite. Release Metal
+        // model resources before its process-wide backend cleanup runs.
+        MainActor.assumeIsolated { QwenLocalLLM.shared.unload() }
+        super.tearDown()
+    }
 
     private var qwenCacheURL: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Jack/Meetings/models/qwen3.5-4b-q4", isDirectory: true)
+    }
+
+    override func setUp() async throws {
+        try await super.setUp()
+        try XCTSkipUnless(QwenLocalLLM.cachedModelExists(in: qwenCacheURL), "Qwen is not cached")
+        // Dictation now warms cold models without delaying text delivery.
+        // These manual checks exercise the warm model's rewrite quality.
+        try await QwenLocalLLM.shared.ensureLoadedFromCache(cacheDirectory: qwenCacheURL)
     }
 
     func testMediumLevelHealsSelfCorrection() async throws {

@@ -10,8 +10,7 @@ import Foundation
 ///   - One element (the focused one), not a tree walk.
 ///   - Plain-string AXValue only — no NSAttributedString, no role inspection,
 ///     no children. If the field doesn't hand us a `String`, we give up.
-///   - No timeouts. The single AX call is bounded by macOS internally (a few
-///     ms in the normal case, ~50ms on a slow Electron app).
+    ///   - Bounded AX messaging and no secure fields.
 ///
 /// **Why this isn't `@MainActor`.** Polling happens on a detached task that
 /// runs every 1s — pinning to the main actor would block dictation UI on each
@@ -37,7 +36,16 @@ enum AXFocusedElementReader {
     /// Read the focused element's value from the app with the given pid.
     /// Safe to call from any thread.
     static func readFocusedTextValue(pid: pid_t) -> Result {
+        guard let element = focusedTextElement(pid: pid) else { return .noFocusedElement }
+        var rawValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &rawValue) == .success,
+              let text = rawValue as? String else { return .unsupportedValueType }
+        return .success(text)
+    }
+
+    static func focusedTextElement(pid: pid_t) -> AXUIElement? {
         let appElement = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(appElement, 0.15)
 
         var focused: CFTypeRef?
         let err = AXUIElementCopyAttributeValue(
@@ -52,32 +60,18 @@ enum AXFocusedElementReader {
         guard err == .success,
               let value = focused,
               CFGetTypeID(value) == AXUIElementGetTypeID() else {
-            return .noFocusedElement
+            return nil
         }
         // swiftlint:disable:next force_cast
         let element = (value as! AXUIElement)
-
-        var rawValue: CFTypeRef?
-        let valueErr = AXUIElementCopyAttributeValue(
-            element,
-            kAXValueAttribute as CFString,
-            &rawValue
-        )
-        // No value attribute at all — buttons, images, anything non-textual.
-        guard valueErr == .success, let raw = rawValue else {
-            return .noFocusedElement
-        }
-
-        if let str = raw as? String {
-            return .success(str)
-        }
-        // Rich-text editors sometimes back the value with an
-        // NSAttributedString. We could `.string` it out, but the bigger
-        // problem is that diffing rich-text edits reliably is its own
-        // project — skip for v1.
-        if raw is NSAttributedString {
-            return .unsupportedValueType
-        }
-        return .unsupportedValueType
+        AXUIElementSetMessagingTimeout(element, 0.15)
+        var role: CFTypeRef?
+        var subrole: CFTypeRef?
+        AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role)
+        AXUIElementCopyAttributeValue(element, kAXSubroleAttribute as CFString, &subrole)
+        guard let role = role as? String,
+              [kAXTextFieldRole, kAXTextAreaRole, kAXComboBoxRole].contains(role),
+              subrole as? String != kAXSecureTextFieldSubrole else { return nil }
+        return element
     }
 }
