@@ -57,6 +57,7 @@ extension MeetingTranscriptionEngineProtocol {
 }
 
 enum MeetingTranscriptionError: LocalizedError {
+    case transcriptionFailed
     case modelMissing(engine: MeetingTranscriptionEngine)
     case modelLoadFailed(engine: MeetingTranscriptionEngine, underlying: Error?)
     case modelDownloadFailed(engine: MeetingTranscriptionEngine)
@@ -66,6 +67,8 @@ enum MeetingTranscriptionError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .transcriptionFailed:
+            return L10n.string("dictation.error.transcriptionFailed", default: "Speech recognition stopped unexpectedly. Please try again.")
         case .modelMissing(let engine):
             return L10n.string(
                 "meeting.transcription.error.modelMissing",

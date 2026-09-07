@@ -23,6 +23,11 @@ final class DictationCoordinator: ObservableObject {
     @Published private(set) var phase: DictationPhase = .idle
     /// Live mic RMS — proxied from the audio service for view binding ease.
     @Published private(set) var level: Double = 0
+    @Published private(set) var isPreparing = false
+    @Published private(set) var elapsedSeconds: Double = 0
+    @Published private(set) var lastResultWasCopied = false
+    private var meterTask: Task<Void, Never>?
+    private var sessionID: UUID?
     /// Rolling partial transcript — accumulates as the engine yields finalized
     /// chunks during the listening phase. Empty until the first chunk lands.
     /// This is what makes the pill feel "live" rather than buffered:
@@ -71,7 +76,7 @@ final class DictationCoordinator: ObservableObject {
         return MeetingTranscriptionService(modelsRoot: modelsRoot)
     }()
 
-    private let audio = DictationAudioCaptureService()
+    private let audio: DictationAudioCaptureService
     private let paste = DictationPasteService()
     private let ducker = AudioDucker()
     private let screenContext = ScreenContextService.shared
@@ -110,8 +115,6 @@ final class DictationCoordinator: ObservableObject {
     /// key, Jack is frontmost and the target window is gone.
     private var askScreenCaptureTask: Task<ScreenContextReader.CaptureResult?, Never>?
     private var sessionStartedAt: Date?
-    /// Set to true while we're mid-cancel so the trailing transcribe doesn't paste.
-    private var isCancelled = false
     /// Screen-context terms merged into live vocab once the parallel capture lands.
     private var liveScreenContextTerms: [String] = []
     /// Built once per session — vocab matcher is not rerun on every partial.
@@ -120,9 +123,6 @@ final class DictationCoordinator: ObservableObject {
     /// Trailing-edge republish of a debounce-dropped caption — see
     /// `publishLiveCaption`.
     private var pendingCaptionFlushTask: Task<Void, Never>?
-    /// 30ms debounce on start/stop to swallow keyboard repeat.
-    private var lastTransitionAt: CFTimeInterval = 0
-    private let transitionDebounce: CFTimeInterval = 0.03
 
     /// Timestamp of the most recent meaningful "the user is using dictation"
     /// signal. Compared against `settings.engineIdleUnload.idleSeconds` by
@@ -135,7 +135,9 @@ final class DictationCoordinator: ObservableObject {
     /// engines are loaded so we don't spin a timer for nothing.
     private var idleWatcherTask: Task<Void, Never>?
 
-    init() {}
+    init(audio: DictationAudioCaptureService = DictationAudioCaptureService()) {
+        self.audio = audio
+    }
 
     func attach(store: DictationStore) {
         self.store = store
@@ -174,15 +176,20 @@ final class DictationCoordinator: ObservableObject {
     /// owned by `DictationLauncher` passes `.askScreen` to fire the
     /// ask-the-screen flow.
     func startSession(mode: DictationMode = .polish) {
-        guard debounceTransition() else { return }
+        if case .failed = phase { resetToIdle() }
         guard !isActive else { return }
+        let id = UUID()
+        sessionID = id
+        isPreparing = true
+        elapsedSeconds = 0
+        lastResult = nil
+        lastResultWasCopied = false
         sessionStartedAt = Date()
         liveTranscript = ""
         liveTranscriptStableWordCount = 0
         liveScreenContextTerms = []
         sessionWeightedTerms = []
         lastCaptionPublishAt = 0
-        isCancelled = false
         currentMode = mode
         phase = .listening
         logger.info("Dictation session started — mode=\(mode.rawValue)")
@@ -195,7 +202,8 @@ final class DictationCoordinator: ObservableObject {
         // we kick off audio capture.
         if let settings = store?.settings, settings.duckOtherAudio {
             Task { [weak self] in
-                await self?.ducker.startDucking(amount: settings.duckAmount)
+                guard let self, self.sessionID == id, self.phase == .listening else { return }
+                await self.ducker.startDucking(amount: settings.duckAmount)
             }
         }
 
@@ -246,14 +254,22 @@ final class DictationCoordinator: ObservableObject {
         }
 
         sessionTask = Task { [weak self] in
-            guard let self else { return }
+            guard let self, !Task.isCancelled, self.sessionID == id else { return }
+            // The release can precede even the first turn of this task.
+            guard self.phase == .listening else {
+                self.resetToIdle()
+                return
+            }
             do {
                 try await self.runSession()
             } catch {
+                guard !Task.isCancelled, self.sessionID == id else { return }
+                if error is CancellationError {
+                    self.resetToIdle()
+                    return
+                }
                 self.logger.error("Session failed: \(error.localizedDescription)")
-                self.phase = .failed(reason: error.localizedDescription)
-                try? await Task.sleep(nanoseconds: 1_500_000_000)
-                self.resetToIdle()
+                self.fail(reason: error.localizedDescription)
             }
         }
     }
@@ -261,7 +277,6 @@ final class DictationCoordinator: ObservableObject {
     /// Stop recording and proceed to transcription. Pushed by hotkey release
     /// (push-to-talk) or a second tap (toggle).
     func stopSession() {
-        guard debounceTransition() else { return }
         guard case .listening = phase else { return }
         logger.info("Dictation session stopping — moving to transcription")
         // Flip the phase immediately so the pill swaps to "Transcribing"
@@ -280,8 +295,7 @@ final class DictationCoordinator: ObservableObject {
     func cancelSession() {
         guard isActive else { return }
         logger.info("Dictation session cancelled")
-        isCancelled = true
-        audio.stop()
+        audio.stop(immediately: true)
         sessionTask?.cancel()
         sessionTask = nil
         screenContextTask?.cancel()
@@ -293,12 +307,12 @@ final class DictationCoordinator: ObservableObject {
     }
 
     /// Called when the toggle trigger fires — start if idle, stop if recording.
-    func handleToggle() {
+    func handleToggle(mode: DictationMode = .polish) {
         switch phase {
         case .listening:
             stopSession()
-        case .idle:
-            startSession()
+        case .idle, .failed:
+            startSession(mode: mode)
         default:
             // Ignore extra presses while transcribing/pasting — a second tap
             // must not start a overlapping session or tear down in-flight work.
@@ -316,6 +330,7 @@ final class DictationCoordinator: ObservableObject {
         }
 
         let settings = store.settings
+        let id = sessionID
 
         // 1. Capture starts immediately — buffers begin queueing in the
         // audio service's AsyncStream regardless of whether the engine is
@@ -325,6 +340,18 @@ final class DictationCoordinator: ObservableObject {
             preferredDeviceUID: settings.preferredMicDeviceUID,
             requestedGain: settings.inputGain
         )
+
+        try Task.checkCancellation()
+        isPreparing = false
+        meterTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 80_000_000)
+                guard let self, !Task.isCancelled, self.sessionID == id,
+                      self.phase == .listening else { return }
+                self.level = self.audio.level
+                self.elapsedSeconds = self.audio.elapsedSeconds
+            }
+        }
 
         // 2. Warm the engine synchronously. On a warm cache this is ~150ms;
         // on a cold one (first launch) it can take several seconds. While we
@@ -344,21 +371,13 @@ final class DictationCoordinator: ObservableObject {
         // explicitly downloads from Settings → Dictate → Advanced.
         if !engine.isReady {
             logger.info("Dictation aborted — dictation model not downloaded")
-            audio.stop()
-            Task { [weak self] in await self?.ducker.stopDucking() }
-            phase = .failed(reason: "The dictation model isn't downloaded yet. Open Settings → Dictate → Advanced to download it, then try again.")
+            fail(reason: L10n.string("dictation.error.modelMissing", default: "Download the speech model in Settings → Dictate → Advanced, then try again."))
             return
         }
 
-        do {
-            try await engine.warmUp()
-        } catch {
-            logger.error("Engine warm-up failed: \(error.localizedDescription)")
-            // Continue anyway — transcribeStream will just yield no chunks
-            // and we'll fall through to the empty-transcript guard below.
-        }
+        try await engine.warmUp()
 
-        if isCancelled { return }
+        if Task.isCancelled { return }
 
         // 3. Live caption while audio arrives.
         var liveAccumulated = ""
@@ -373,7 +392,7 @@ final class DictationCoordinator: ObservableObject {
         Task { [weak self] in
             let terms = await liveScreenTermsTask?.value ?? []
             await MainActor.run {
-                guard let self else { return }
+                guard let self, self.sessionID == id, self.phase == .listening else { return }
                 self.liveScreenContextTerms = terms
                 self.sessionWeightedTerms = LiveCaptionComposer.buildWeightedTerms(
                     settings: settings,
@@ -389,11 +408,9 @@ final class DictationCoordinator: ObservableObject {
             meetingStartedAt: startedAt
         )
         var previousWindowText = ""
-        do {
         for try await chunk in chunkStream {
-            if Task.isCancelled || isCancelled { return }
+            if Task.isCancelled { return }
             let windowText = chunk.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !windowText.isEmpty else { continue }
             if speechEngine == .parakeetUnifiedStream {
                 // Native streaming model: each chunk is the *cumulative*
                 // transcript (committed + tentative), so replace instead of
@@ -421,6 +438,7 @@ final class DictationCoordinator: ObservableObject {
                 }
                 continue
             }
+            guard !windowText.isEmpty else { continue }
             let merged = LiveCaptionComposer.mergeWindowed(
                 accumulated: liveAccumulated,
                 previousWindow: previousWindowText,
@@ -430,59 +448,37 @@ final class DictationCoordinator: ObservableObject {
             previousWindowText = windowText
             publishLiveCaption(merged)
         }
-        } catch {
-            // The streaming engine couldn't start or died mid-session
-            // (missing model/helper, spawn failure, unsupported architecture).
-            // Surface its message instead of falling through to an empty
-            // transcript.
-            logger.error("Live streaming failed: \(error.localizedDescription)")
-            audio.stop()
-            Task { [weak self] in await self?.ducker.stopDucking() }
-            phase = .failed(reason: error.localizedDescription)
-            try? await Task.sleep(nanoseconds: 1_500_000_000)
-            resetToIdle()
-            return
-        }
 
-        if isCancelled { return }
+        if Task.isCancelled { return }
 
-        // 4. Final transcript:
-        //   • polish off — reuse live transcript when we have one
-        //   • polish on — full one-shot decode for best quality before Qwen
+        // Native streaming has already finalized, including an empty result.
+        // Windowed engines may still need a full decode.
         let collected = audio.collectedSamples
         let liveFallback = liveAccumulated.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !collected.isEmpty || !liveFallback.isEmpty else {
             logger.info("Dictation produced no audio — discarding session")
-            resetToIdle()
+            fail(reason: L10n.string("dictation.error.noSpeech", default: "No speech was detected. Check your microphone and try again."))
             return
         }
         let oneShotRawFromEngine: String
-        do {
-            if speechEngine == .parakeetUnifiedStream, !liveFallback.isEmpty {
-                // The streaming decode IS the canonical transcript for the
-                // unified model — the final chunk already drained the
-                // decoder's right context. A second full decode would only
-                // add latency between key release and paste.
-                oneShotRawFromEngine = liveFallback
-            } else if !settings.postProcessEnabled {
-                let live = liveAccumulated.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !live.isEmpty {
-                    oneShotRawFromEngine = live
-                } else {
-                    oneShotRawFromEngine = try await engine.transcribeSamples(collected)
-                }
+        if speechEngine == .parakeetUnifiedStream {
+            // The streaming decode IS the canonical transcript for the
+            // unified model — the final chunk already drained the
+            // decoder's right context. A second full decode would only
+            // add latency between key release and paste.
+            oneShotRawFromEngine = liveFallback
+        } else if !settings.postProcessEnabled {
+            let live = liveAccumulated.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !live.isEmpty {
+                oneShotRawFromEngine = live
             } else {
                 oneShotRawFromEngine = try await engine.transcribeSamples(collected)
             }
-        } catch {
-            logger.error("One-shot transcribe failed: \(error.localizedDescription)")
-            phase = .failed(reason: "Couldn't transcribe. Please try again.")
-            try? await Task.sleep(nanoseconds: 1_500_000_000)
-            resetToIdle()
-            return
+        } else {
+            oneShotRawFromEngine = try await engine.transcribeSamples(collected)
         }
 
-        if isCancelled { return }
+        if Task.isCancelled { return }
 
         // Strip Parakeet's trailing period when the user dictated only one
         // word. Done at the engine boundary, before any other pass, so a
@@ -543,8 +539,8 @@ final class DictationCoordinator: ObservableObject {
         let raw = TranscriptCleaner.clean(withPunctuation)
 
         guard !raw.isEmpty else {
-            logger.info("Dictation produced no transcript — discarding session")
-            resetToIdle()
+            logger.info("Dictation produced no transcript")
+            fail(reason: L10n.string("dictation.error.noSpeech", default: "No speech was detected. Check your microphone and try again."))
             return
         }
 
@@ -565,7 +561,7 @@ final class DictationCoordinator: ObservableObject {
             // never see two generate calls at once, and a drained pass may
             // already cover the whole final transcript (reuse below).
             await livePolisher?.finishSession()
-            if isCancelled { return }
+            if Task.isCancelled { return }
             let effectiveLevel = settings.postProcessEnabled ? settings.level : .none
             if !settings.formatLists, !settings.formatParagraphs,
                let live = livePolisher?.finalResult(matching: raw) {
@@ -591,8 +587,9 @@ final class DictationCoordinator: ObservableObject {
                 let output = await AppleIntelligencePolisher.polish(
                     prompt: prompt,
                     onPartial: { [weak self] partial in
+                        guard let self, self.sessionID == id, self.phase == .rewriting else { return }
                         let preview = DictationStyleEngine.cleanOutput(partial, original: raw)
-                        if !preview.isEmpty { self?.publishPolishPreview(preview) }
+                        if !preview.isEmpty { self.publishPolishPreview(preview) }
                     }
                 )
                 var cleaned = DictationStyleEngine.cleanOutput(output ?? "", original: raw)
@@ -615,7 +612,8 @@ final class DictationCoordinator: ObservableObject {
                     // their raw words heal into the polished version instead of
                     // staring at a frozen transcript behind "Polishing…".
                     onPartial: { [weak self] preview in
-                        self?.publishPolishPreview(preview)
+                        guard let self, self.sessionID == id, self.phase == .rewriting else { return }
+                        self.publishPolishPreview(preview)
                     }
                 )
             }
@@ -637,14 +635,12 @@ final class DictationCoordinator: ObservableObject {
             ? SmartFormatter.applyPostClean(polished, settings: settings)
             : polished
 
-        if isCancelled { return }
+        if Task.isCancelled { return }
 
         // Land the canonical text in the caption (no debounce) so the brief
         // pasting/done beat shows exactly what was pasted, not a mid-stream
         // partial.
-        if needsQwen {
-            publishPolishPreview(finalText, force: true)
-        }
+        publishPolishPreview(finalText, force: true)
 
         // Compose mode short-circuits the paste path. The finished text goes
         // to the open compose editor (inserted at the caret) rather than into
@@ -684,12 +680,13 @@ final class DictationCoordinator: ObservableObject {
         // them Cmd+V manually.
         phase = .pasting
         if settings.autoPasteIntoActiveApp {
-            paste.paste(
+            lastResultWasCopied = !paste.paste(
                 text: finalText,
                 restorePasteboard: !settings.saveToClipboardHistory
             )
         } else {
             paste.copyOnly(finalText)
+            lastResultWasCopied = true
         }
 
         lastResult = finalText
@@ -702,14 +699,14 @@ final class DictationCoordinator: ObservableObject {
         Analytics.dictationCompleted(mode: currentMode.rawValue, durationSeconds: duration)
         let entry = DictationHistoryEntry(
             text: finalText,
-            rawTranscript: raw,
+            rawTranscript: oneShotRawFromEngine,
             style: settings.style,
             level: settings.level,
             durationSeconds: duration
         )
         Task { @MainActor [weak self] in
             guard let self, let store = self.store else { return }
-            if settings.learnFromEdits,
+            if settings.learnFromEdits, !self.lastResultWasCopied,
                let learner = self.correctionLearner,
                settings.autoPasteIntoActiveApp
             {
@@ -737,7 +734,7 @@ final class DictationCoordinator: ObservableObject {
         // Guarded so a cancel/new session that already moved the phase
         // doesn't get yanked back to idle underneath the user.
         try? await Task.sleep(nanoseconds: 500_000_000)
-        if case .done = phase {
+        if !Task.isCancelled, sessionID == id, case .done = phase {
             resetToIdle()
         }
     }
@@ -757,13 +754,11 @@ final class DictationCoordinator: ObservableObject {
         }
 
         guard let executor = voiceActionExecutor else {
-            phase = .failed(reason: "Voice actions aren't ready yet. Restart Jack and try again.")
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            resetToIdle()
+            fail(reason: "Voice actions aren't ready yet. Restart Jack and try again.")
             return
         }
 
-        if isCancelled { return }
+        if Task.isCancelled { return }
 
         phase = .executing
         let result = await executor.execute(
@@ -771,7 +766,7 @@ final class DictationCoordinator: ObservableObject {
             connectors: settings.voiceActionConnectors
         )
 
-        if isCancelled { return }
+        if Task.isCancelled { return }
 
         let message: String
         switch result {
@@ -780,25 +775,20 @@ final class DictationCoordinator: ObservableObject {
         case .spotify(let text):
             message = text
         case .permissionDenied(let app):
-            phase = .failed(reason: "\(app) access is required. Turn it on in Settings → Dictate → Voice actions.")
-            try? await Task.sleep(nanoseconds: 2_500_000_000)
-            resetToIdle()
+            fail(reason: "\(app) access is required. Turn it on in Settings → Dictate → Voice actions.")
             return
         case .notRecognized:
-            phase = .failed(reason: "Didn't catch a command. Try “remind me to call mom tomorrow” or “pause”.")
-            try? await Task.sleep(nanoseconds: 2_500_000_000)
-            resetToIdle()
+            fail(reason: "Didn't catch a command. Try “remind me to call mom tomorrow” or “pause”.")
             return
         case .failed(let reason):
-            phase = .failed(reason: reason)
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            resetToIdle()
+            fail(reason: reason)
             return
         }
 
         lastResult = message
         phase = .done
         try? await Task.sleep(nanoseconds: 1_200_000_000)
+        guard !Task.isCancelled else { return }
         resetToIdle()
         touchActivity()
         maybeUnloadImmediately(reason: "voice action complete")
@@ -839,7 +829,7 @@ final class DictationCoordinator: ObservableObject {
         let screenText = captureResult?.text ?? ""
         let appName = captureResult?.frontmostName
 
-        if isCancelled { return }
+        if Task.isCancelled { return }
 
         // 3. Ask Qwen. ScreenQAEngine handles all the "model not loaded"
         // and truncation logic internally and returns one of three outcomes.
@@ -850,7 +840,7 @@ final class DictationCoordinator: ObservableObject {
             appName: appName
         )
 
-        if isCancelled { return }
+        if Task.isCancelled { return }
 
         let finalText: String
         switch outcome {
@@ -860,14 +850,10 @@ final class DictationCoordinator: ObservableObject {
             // Don't paste a model-error string into the user's editor —
             // surface the failure on the pill instead, like a transcribe
             // error would.
-            phase = .failed(reason: "AI model isn't downloaded yet. Open Jack settings to download it, then try again.")
-            try? await Task.sleep(nanoseconds: 2_500_000_000)
-            resetToIdle()
+            fail(reason: "AI model isn't downloaded yet. Open Jack settings to download it, then try again.")
             return
         case .failed(let message):
-            phase = .failed(reason: "Couldn't answer. \(message)")
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            resetToIdle()
+            fail(reason: "Couldn't answer. \(message)")
             return
         }
 
@@ -879,12 +865,13 @@ final class DictationCoordinator: ObservableObject {
 
         phase = .pasting
         if settings.autoPasteIntoActiveApp {
-            paste.paste(
+            lastResultWasCopied = !paste.paste(
                 text: finalText,
                 restorePasteboard: !settings.saveToClipboardHistory
             )
         } else {
             paste.copyOnly(finalText)
+            lastResultWasCopied = true
         }
 
         lastResult = finalText
@@ -1023,9 +1010,10 @@ final class DictationCoordinator: ObservableObject {
         if provider == .qwen, let cache = store?.qwenCacheURL {
             Task { try? await QwenLocalLLM.shared.ensureLoadedFromCache(cacheDirectory: cache) }
         }
+        let id = sessionID
         let polisher = LiveDictationPolisher(prepare: prepare, polishChunk: polishChunk)
         polisher.onUpdate = { [weak self] in
-            guard let self, case .listening = self.phase else { return }
+            guard let self, self.sessionID == id, case .listening = self.phase else { return }
             guard let state = self.livePolisher?.compose(cumulativeRaw: self.currentLiveRaw) else { return }
             self.publishLiveCaption(state, force: true, skipCleanup: true)
         }
@@ -1079,14 +1067,30 @@ final class DictationCoordinator: ObservableObject {
         liveTranscriptStableWordCount = LiveCaptionComposer.wordCount(text)
     }
 
-    private func debounceTransition() -> Bool {
-        let now = CACurrentMediaTime()
-        if now - lastTransitionAt < transitionDebounce { return false }
-        lastTransitionAt = now
-        return true
+    private func fail(reason: String) {
+        audio.stop(immediately: true)
+        meterTask?.cancel()
+        meterTask = nil
+        isPreparing = false
+        level = 0
+        screenContextTask?.cancel()
+        askScreenCaptureTask?.cancel()
+        pendingCaptionFlushTask?.cancel()
+        livePolisher?.cancel()
+        phase = .failed(reason: reason)
+        Task { [weak self] in await self?.ducker.stopDucking() }
     }
 
     private func resetToIdle() {
+        sessionID = nil
+        audio.stop(immediately: true)
+        meterTask?.cancel()
+        meterTask = nil
+        isPreparing = false
+        screenContextTask?.cancel()
+        screenContextTask = nil
+        askScreenCaptureTask?.cancel()
+        askScreenCaptureTask = nil
         sessionTask = nil
         sessionStartedAt = nil
         livePolisher?.cancel()
@@ -1099,7 +1103,6 @@ final class DictationCoordinator: ObservableObject {
         liveTranscriptStableWordCount = 0
         liveScreenContextTerms = []
         sessionWeightedTerms = []
-        isCancelled = false
         currentMode = .polish
         phase = .idle
         level = 0
@@ -1198,4 +1201,3 @@ final class DictationCoordinator: ObservableObject {
         }
     }
 }
-

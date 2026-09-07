@@ -1,4 +1,4 @@
-import AVFoundation
+@preconcurrency import AVFoundation
 import Foundation
 import OSLog
 
@@ -9,21 +9,23 @@ import OSLog
 /// this engine runs inference in a subprocess: raw 16 kHz mono f32 PCM goes
 /// into the helper's stdin, and cumulative transcript updates come back as
 /// `JT>{"committed":...,"tentative":...}` JSON lines on stdout. The model is
-/// a *native* streaming model, so partials are committed text — no windowed
-/// re-decode, no second full decode on key release.
+/// streaming model; partials contain both committed and tentative text.
+/// Key release finalizes this stream without a second whole-recording decode.
 ///
 /// The subprocess boundary is deliberate: it keeps ggml/Metal out of the app
 /// process (a crash there can't take Jack down) and avoids linking C++ into
-/// the SwiftPM build. Model load is ~0.2s, so spawn-per-session is fine.
+/// the SwiftPM build. Each session loads the model in its own helper.
 @MainActor
 final class TranscribeCppStreamingEngine: MeetingTranscriptionEngineProtocol {
     let engineID: MeetingTranscriptionEngine = .parakeetUnifiedStream
 
     private let modelURL: URL
+    private let helperExecutableURL: URL?
     private let logger = Logger(subsystem: AppBrand.logSubsystem, category: "TranscribeCppEngine")
 
-    init(modelURL: URL) {
+    init(modelURL: URL, helperURL: URL? = TranscribeCppStreamingEngine.helperURL) {
         self.modelURL = modelURL
+        self.helperExecutableURL = helperURL
     }
 
     // MARK: - Helper binary location
@@ -47,10 +49,9 @@ final class TranscribeCppStreamingEngine: MeetingTranscriptionEngineProtocol {
     }
 
     var isReady: Bool {
-        // Cheap but real: a nonzero file that starts with the GGUF magic.
-        // A truncated download or a 404 HTML body would otherwise register
-        // as "ready" and then produce silence forever.
-        Self.modelFileIsValid(at: modelURL) && Self.helperURL != nil
+        // This is a presence/header check. Successful helper finalization is
+        // checked separately; a valid header does not prove a complete model.
+        Self.modelFileIsValid(at: modelURL) && helperExecutableURL != nil
     }
 
     /// A model file we're willing to load: present, nonzero, and starting
@@ -77,7 +78,7 @@ final class TranscribeCppStreamingEngine: MeetingTranscriptionEngineProtocol {
         guard isReady else {
             throw MeetingTranscriptionError.modelMissing(engine: engineID)
         }
-        // Nothing to preload — the helper loads the GGUF in ~0.2s per session.
+        // The helper loads the GGUF when a session starts.
     }
 
     // MARK: - Download
@@ -177,18 +178,20 @@ final class TranscribeCppStreamingEngine: MeetingTranscriptionEngineProtocol {
     /// Native streaming: each yielded chunk carries the *cumulative*
     /// transcript so far (committed + tentative), not a time-window slice.
     /// Consumers must replace, not append — see
-    /// `DictationCoordinator`'s `yieldsCumulativeLiveText` handling.
+    /// `DictationCoordinator`'s native-stream handling.
     func transcribeStream(
         from audio: AsyncStream<AVAudioPCMBuffer>,
         meetingStartedAt: Date
     ) -> AsyncThrowingStream<MeetingTranscriptChunk, Error> {
         let modelPath = modelURL.path
-        let helperPath = Self.helperURL?.path
+        let helperPath = helperExecutableURL?.path
         let engine = engineID
         let engineRaw = engineID.rawValue
+        let input = TranscribeAudioStream(buffers: audio)
 
         return AsyncThrowingStream { continuation in
-            Task(priority: .userInitiated) {
+            let task = Task.detached(priority: .userInitiated) {
+                guard !Task.isCancelled else { continuation.finish(); return }
                 guard let helperPath else {
                     // No helper on disk — finish with a real error so the
                     // consumer shows "model not downloaded" instead of a
@@ -200,6 +203,7 @@ final class TranscribeCppStreamingEngine: MeetingTranscriptionEngineProtocol {
                     // Throws on x86_64 (unsupported architecture) or a spawn
                     // failure — both now surface to the caller.
                     let session = try TranscribeHelperSession(helperPath: helperPath, modelPath: modelPath)
+                    defer { session.terminate() }
 
                     // Reader and writer run concurrently: the writer pumps
                     // mic buffers into stdin; the reader yields a chunk per
@@ -207,27 +211,41 @@ final class TranscribeCppStreamingEngine: MeetingTranscriptionEngineProtocol {
                     // triggers finalize inside the helper, which emits the
                     // "final" line and exits. Dictation ignores chunk
                     // timestamps, so they stay zero here.
-                    let readerTask = Task {
-                        for try await update in session.updates() {
-                            let text = update.trimmingCharacters(in: .whitespacesAndNewlines)
-                            guard !text.isEmpty else { continue }
-                            continuation.yield(MeetingTranscriptChunk(
-                                startTimeSeconds: 0,
-                                endTimeSeconds: 0,
-                                text: text,
-                                engineRaw: engineRaw
-                            ))
+                    try await withTaskCancellationHandler {
+                        let readerTask = Task {
+                            do {
+                                for try await update in session.updates() {
+                                    try Task.checkCancellation()
+                                    // An empty final update must replace an earlier guess, too.
+                                    continuation.yield(MeetingTranscriptChunk(
+                                        startTimeSeconds: 0,
+                                        endTimeSeconds: 0,
+                                        text: update.trimmingCharacters(in: .whitespacesAndNewlines),
+                                        engineRaw: engineRaw
+                                    ))
+                                }
+                            } catch {
+                                // Fail while the microphone is still open; don't wait for
+                                // another key release to discover a dead helper.
+                                continuation.finish(throwing: error)
+                                session.terminate()
+                                throw error
+                            }
                         }
+                        defer { readerTask.cancel() }
+                        for await buffer in input.buffers {
+                            try Task.checkCancellation()
+                            let samples = WhisperTranscriptionEngine.extractMonoSamples(from: buffer)
+                            guard !samples.isEmpty else { continue }
+                            try session.feed(samples)
+                        }
+                        session.closeInput()
+                        try await readerTask.value
+                        try Task.checkCancellation()
+                    } onCancel: {
+                        // Killing the child also releases any blocked pipe read/write.
+                        session.terminate()
                     }
-
-                    for await buffer in audio {
-                        let samples = WhisperTranscriptionEngine.extractMonoSamples(from: buffer)
-                        guard !samples.isEmpty else { continue }
-                        session.feed(samples)
-                    }
-                    session.closeInput()
-                    try await readerTask.value
-                    session.terminate()
                     continuation.finish()
                 } catch {
                     Logger(subsystem: AppBrand.logSubsystem, category: "TranscribeCppEngine")
@@ -235,6 +253,7 @@ final class TranscribeCppStreamingEngine: MeetingTranscriptionEngineProtocol {
                     continuation.finish(throwing: error)
                 }
             }
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
 
@@ -242,25 +261,38 @@ final class TranscribeCppStreamingEngine: MeetingTranscriptionEngineProtocol {
     /// The streaming decode IS the high-quality path for this model, so this
     /// is only hit for re-transcription / file imports / non-live fallbacks.
     func transcribeSamples(_ samples: [Float]) async throws -> String {
-        guard let helperPath = Self.helperURL?.path else {
+        guard let helperPath = helperExecutableURL?.path else {
             throw MeetingTranscriptionError.modelMissing(engine: engineID)
         }
         let modelPath = modelURL.path
-        return try await Task.detached(priority: .userInitiated) {
+        let task = Task.detached(priority: .userInitiated) {
+            try Task.checkCancellation()
             let session = try TranscribeHelperSession(helperPath: helperPath, modelPath: modelPath)
-            let readerTask = Task { () -> String in
-                var latest = ""
-                for try await update in session.updates() {
-                    latest = update
+            defer { session.terminate() }
+            return try await withTaskCancellationHandler {
+                let readerTask = Task { () -> String in
+                    var latest = ""
+                    for try await update in session.updates() {
+                        try Task.checkCancellation()
+                        latest = update
+                    }
+                    return latest
                 }
-                return latest
+                defer { readerTask.cancel() }
+                try session.feed(samples)
+                session.closeInput()
+                let latest = try await readerTask.value
+                try Task.checkCancellation()
+                return latest.trimmingCharacters(in: .whitespacesAndNewlines)
+            } onCancel: {
+                session.terminate()
             }
-            session.feed(samples)
-            session.closeInput()
-            let latest = try await readerTask.value
-            session.terminate()
-            return latest.trimmingCharacters(in: .whitespacesAndNewlines)
-        }.value
+        }
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
     }
 
     func transcribeFile(at audioURL: URL) async throws -> [MeetingTranscriptChunk] {
@@ -337,6 +369,12 @@ final class TranscribeCppStreamingEngine: MeetingTranscriptionEngineProtocol {
 
 // MARK: - Helper subprocess
 
+/// AVAudioPCMBuffer predates Sendable. Capture publishes independent copies;
+/// this stream has one consumer, which only reads them on the worker task.
+private struct TranscribeAudioStream: @unchecked Sendable {
+    let buffers: AsyncStream<AVAudioPCMBuffer>
+}
+
 /// Wraps one `jack-transcribe-stream` process: PCM in via stdin, transcript
 /// lines out via stdout. Not tied to any actor — created and used inside a
 /// single detached task per session.
@@ -354,8 +392,8 @@ private final class TranscribeHelperSession: @unchecked Sendable {
         throw MeetingTranscriptionError.unsupportedArchitecture(engine: .parakeetUnifiedStream)
         #else
         process.executableURL = URL(fileURLWithPath: helperPath)
-        // 160ms chunk / 160ms right context = 320ms lookahead — the
-        // low-latency entry in the model's training menu (WER 1.64%).
+        // Current product setting: 320ms of audio lookahead. This excludes
+        // microphone startup, inference, caption publication, and polishing.
         process.arguments = [modelPath, "160", "160"]
         process.standardInput = stdinPipe
         process.standardOutput = stdoutPipe
@@ -369,9 +407,11 @@ private final class TranscribeHelperSession: @unchecked Sendable {
     func updates() -> AsyncThrowingStream<String, Error> {
         let handle = stdoutPipe.fileHandleForReading
         return AsyncThrowingStream { continuation in
-            Task {
+            let task = Task.detached { [self] in
                 do {
+                    var receivedFinal = false
                     for try await line in handle.bytes.lines {
+                        try Task.checkCancellation()
                         // ggml/Metal may print diagnostics to stdout; only
                         // lines with the JT> prefix are protocol lines.
                         guard line.hasPrefix("JT>"),
@@ -379,6 +419,7 @@ private final class TranscribeHelperSession: @unchecked Sendable {
                               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
                         else { continue }
                         if let final = obj["final"] as? String {
+                            receivedFinal = true
                             continuation.yield(final)
                         } else if obj["ready"] == nil {
                             let committed = obj["committed"] as? String ?? ""
@@ -387,19 +428,25 @@ private final class TranscribeHelperSession: @unchecked Sendable {
                             continuation.yield(joined)
                         }
                     }
+                    process.waitUntilExit()
+                    try Task.checkCancellation()
+                    guard receivedFinal, process.terminationStatus == 0 else {
+                        throw MeetingTranscriptionError.transcriptionFailed
+                    }
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
                 }
             }
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
 
-    func feed(_ samples: [Float]) {
+    func feed(_ samples: [Float]) throws {
         let data = samples.withUnsafeBufferPointer { Data(buffer: $0) }
         // Pipe writes only block if the helper stops draining; it reads
         // continuously, and live audio is just 64 KB/s, so this stays cheap.
-        try? stdinPipe.fileHandleForWriting.write(contentsOf: data)
+        try stdinPipe.fileHandleForWriting.write(contentsOf: data)
     }
 
     func closeInput() {

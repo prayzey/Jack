@@ -1018,3 +1018,30 @@
 "settings.appearance.tray.followNewest.subtitle" = "Return to the newest clips whenever the tray opens.";
 "settings.appearance.tray.newestSide.title" = "Newest Clip Side";
 "settings.appearance.tray.newestSide.subtitle" = "Choose where new clips enter the tray.";
+
+/* Dictation session feedback and recovery */
+"dictation.error.transcriptionFailed" = "Speech recognition stopped unexpectedly. Please try again.";
+"dictation.error.modelMissing" = "Download the speech model in Settings → Dictate → Advanced, then try again.";
+"dictation.error.noSpeech" = "No speech was detected. Check your microphone and try again.";
+"dictation.error.permission" = "Microphone access is required for dictation.";
+"dictation.error.noInput" = "No audio input detected. Connect a mic and try again.";
+"dictation.error.audioSystem" = "Audio system isn't responding. Try again. If it keeps happening, restart your Mac.";
+"dictation.overlay.preparing" = "Starting microphone…";
+"dictation.overlay.ready" = "Speak when you're ready";
+"dictation.overlay.starting" = "Starting…";
+"dictation.overlay.listening" = "Listening";
+"dictation.overlay.duration" = "Recording duration";
+"dictation.overlay.finishAction" = "Run command";
+"dictation.overlay.finishQuestion" = "Get answer";
+"dictation.overlay.finishCompose" = "Insert text";
+"dictation.overlay.stop" = "Finish and paste";
+"dictation.overlay.finishCopy" = "Finish and copy";
+"dictation.overlay.cancel" = "Cancel dictation";
+"dictation.overlay.cancelHint" = "Cancel dictation (Esc)";
+"dictation.overlay.failed" = "Dictation stopped";
+"dictation.overlay.copyDraft" = "Copy draft";
+"dictation.overlay.settings" = "Settings…";
+"dictation.overlay.dismiss" = "Dismiss";
+"dictation.overlay.copied" = "Copied — ready to paste";
+"dictation.overlay.pasteSent" = "Paste sent";
+"dictation.overlay.transcript" = "Live transcript";

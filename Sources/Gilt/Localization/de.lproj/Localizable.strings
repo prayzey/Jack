@@ -1008,3 +1008,30 @@
 "settings.appearance.tray.followNewest.subtitle" = "Beim Öffnen der Ablage zu den neuesten Clips zurückkehren.";
 "settings.appearance.tray.newestSide.title" = "Seite für neueste Clips";
 "settings.appearance.tray.newestSide.subtitle" = "Wähle, wo neue Clips in der Ablage erscheinen.";
+
+/* Dictation session feedback and recovery */
+"dictation.error.transcriptionFailed" = "Die Spracherkennung wurde unerwartet beendet. Bitte versuche es erneut.";
+"dictation.error.modelMissing" = "Lade das Sprachmodell unter Einstellungen → Diktieren → Erweitert herunter und versuche es erneut.";
+"dictation.error.noSpeech" = "Es wurde keine Sprache erkannt. Prüfe dein Mikrofon und versuche es erneut.";
+"dictation.error.permission" = "Zum Diktieren ist Mikrofonzugriff erforderlich.";
+"dictation.error.noInput" = "Kein Audioeingang erkannt. Schließe ein Mikrofon an und versuche es erneut.";
+"dictation.error.audioSystem" = "Das Audiosystem reagiert nicht. Versuche es erneut. Wenn das Problem weiterhin auftritt, starte deinen Mac neu.";
+"dictation.overlay.preparing" = "Mikrofon wird gestartet…";
+"dictation.overlay.ready" = "Sprich, sobald du bereit bist";
+"dictation.overlay.starting" = "Wird gestartet…";
+"dictation.overlay.listening" = "Hört zu";
+"dictation.overlay.duration" = "Aufnahmedauer";
+"dictation.overlay.finishAction" = "Befehl ausführen";
+"dictation.overlay.finishQuestion" = "Antwort erhalten";
+"dictation.overlay.finishCompose" = "Text einfügen";
+"dictation.overlay.stop" = "Beenden und einfügen";
+"dictation.overlay.finishCopy" = "Beenden und kopieren";
+"dictation.overlay.cancel" = "Diktat abbrechen";
+"dictation.overlay.cancelHint" = "Diktat abbrechen (Esc)";
+"dictation.overlay.failed" = "Diktat beendet";
+"dictation.overlay.copyDraft" = "Entwurf kopieren";
+"dictation.overlay.settings" = "Einstellungen…";
+"dictation.overlay.dismiss" = "Schließen";
+"dictation.overlay.copied" = "Kopiert — bereit zum Einfügen";
+"dictation.overlay.pasteSent" = "Einfügen angefordert";
+"dictation.overlay.transcript" = "Live-Transkript";

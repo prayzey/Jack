@@ -2,7 +2,6 @@ import AppKit
 import Carbon.HIToolbox
 import CoreGraphics
 import Foundation
-import OSLog
 
 /// Pastes a dictation result into the frontmost app.
 ///
@@ -12,37 +11,47 @@ import OSLog
 /// so respecting the clipboard is the table stake.
 @MainActor
 final class DictationPasteService {
-    private let logger = Logger(subsystem: AppBrand.logSubsystem, category: "DictationPaste")
     /// How long we hold the pasteboard hostage before restoring. Long enough
     /// for the target app to actually consume the paste, short enough to feel
     /// instant.
     private let restoreDelaySeconds: TimeInterval = 0.35
+    private let pasteboard: NSPasteboard
+    private let postPaste: @MainActor () -> Bool
+
+    init(pasteboard: NSPasteboard = .general, postPaste: @escaping @MainActor () -> Bool = DictationPasteService.postCmdV) {
+        self.pasteboard = pasteboard
+        self.postPaste = postPaste
+    }
 
     /// Paste `text` into the frontmost non-Jack application. Cmd+V fires
     /// immediately; pasteboard restore runs in the background so dictation
     /// doesn't block on a 350ms hold (FluidVoice-style instant handoff).
-    func paste(text: String, restorePasteboard: Bool = true) {
-        guard !text.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+    @discardableResult
+    func paste(text: String, restorePasteboard: Bool = true) -> Bool {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
 
-        let pasteboard = NSPasteboard.general
         let previousItems = restorePasteboard ? snapshotPasteboard(pasteboard) : nil
 
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
-        postCmdV()
+        let transcriptChangeCount = pasteboard.changeCount
+        // If paste cannot be requested, leave the result available for Cmd+V.
+        guard postPaste() else { return false }
 
-        guard restorePasteboard, let previousItems else { return }
+        guard restorePasteboard, let previousItems else { return true }
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: UInt64(self.restoreDelaySeconds * 1_000_000_000))
+            // A newer copy belongs to the user; never overwrite it with our snapshot.
+            guard self.pasteboard.changeCount == transcriptChangeCount else { return }
             self.restore(pasteboard: pasteboard, items: previousItems)
         }
+        return true
     }
 
     /// Quietly write `text` to the pasteboard with no Cmd+V — used when
     /// auto-paste is disabled.
     func copyOnly(_ text: String) {
         guard !text.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-        let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
     }
@@ -70,7 +79,7 @@ final class DictationPasteService {
     }
 
     private func restore(pasteboard: NSPasteboard, items snapshot: PasteboardSnapshot?) {
-        guard let snapshot, !snapshot.items.isEmpty else { return }
+        guard let snapshot else { return }
         pasteboard.clearContents()
         let pbItems: [NSPasteboardItem] = snapshot.items.map { dict in
             let item = NSPasteboardItem()
@@ -79,7 +88,7 @@ final class DictationPasteService {
             }
             return item
         }
-        pasteboard.writeObjects(pbItems)
+        if !pbItems.isEmpty { pasteboard.writeObjects(pbItems) }
     }
 
     // MARK: - Cmd+V synthesis
@@ -87,7 +96,8 @@ final class DictationPasteService {
     // DANGER ZONE: Requires Accessibility permission. Won't work from
     // `swift run` / Xcode play button — only the packaged .app bundle has
     // the bundle identifier the Accessibility prompt remembers.
-    private func postCmdV() {
+    private static func postCmdV() -> Bool {
+        guard AccessibilityService.isTrusted() else { return false }
         let stateIDs: [CGEventSourceStateID] = [.combinedSessionState, .hidSystemState]
         for stateID in stateIDs {
             guard let source = CGEventSource(stateID: stateID) else { continue }
@@ -105,9 +115,8 @@ final class DictationPasteService {
             keyUp.flags = .maskCommand
             keyDown.post(tap: .cgSessionEventTap)
             keyUp.post(tap: .cgSessionEventTap)
-            logger.info("Dictation Cmd+V posted via stateID=\(stateID.rawValue)")
-            return
+            return true
         }
-        logger.error("Dictation Cmd+V failed — no working CGEventSource")
+        return false
     }
 }

@@ -9,6 +9,20 @@ import XCTest
 /// downloaded the unified model.
 @MainActor
 final class TranscribeCppStreamingEngineTests: XCTestCase {
+    func testCorruptModelReportsFailureInsteadOfSuccessfulEmptyTranscript() async throws {
+        try XCTSkipUnless(TranscribeCppStreamingEngine.helperURL != nil, "helper not installed")
+        let corrupt = FileManager.default.temporaryDirectory.appendingPathComponent("corrupt-\(UUID()).gguf")
+        try Data("GGUF".utf8).write(to: corrupt)
+        defer { try? FileManager.default.removeItem(at: corrupt) }
+        let engine = TranscribeCppStreamingEngine(modelURL: corrupt)
+        do {
+            _ = try await engine.transcribeSamples([])
+            XCTFail("A helper that exits without a final transcript must throw")
+        } catch {
+            XCTAssertFalse(error is CancellationError)
+        }
+    }
+
     private var modelURL: URL {
         MeetingAppSupportLocator.transcriptionModelFolder(
             engine: .parakeetUnifiedStream,
@@ -30,6 +44,49 @@ final class TranscribeCppStreamingEngineTests: XCTestCase {
         let chunks = try await engine.transcribeFile(at: wavURL)
         let text = chunks.map(\.text).joined(separator: " ").lowercased()
         XCTAssertTrue(text.contains("ask not what your country can do for you"), "got: \(text)")
+    }
+
+    func testPacedStreamingPublishesWordsBeforeAudioFinishes() async throws {
+        let engine = TranscribeCppStreamingEngine(modelURL: modelURL)
+        try XCTSkipUnless(engine.isReady, "helper binary or unified model not installed")
+        let wavURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Vendor/transcribe.cpp/samples/jfk.wav")
+        let file = try AVAudioFile(forReading: wavURL, commonFormat: .pcmFormatFloat32, interleaved: false)
+        XCTAssertEqual(file.processingFormat.sampleRate, 16_000)
+        let audio = AsyncStream<AVAudioPCMBuffer>.makeStream()
+        let started = Date()
+        var audioEndedAt: Date?
+        let writer = Task {
+            defer { audio.continuation.finish(); audioEndedAt = Date() }
+            while file.framePosition < file.length {
+                try Task.checkCancellation()
+                try await Task.sleep(for: .milliseconds(100))
+                audio.continuation.yield(try Self.readBuffer(from: file))
+            }
+        }
+        defer { writer.cancel(); audio.continuation.finish() }
+        var firstPartialAt: Date?
+        var latest = ""
+        var updateCount = 0
+        for try await chunk in engine.transcribeStream(from: audio.stream, meetingStartedAt: started) {
+            if !chunk.text.isEmpty, firstPartialAt == nil { firstPartialAt = Date() }
+            latest = chunk.text
+            updateCount += 1
+        }
+        try await writer.value
+        let first = try XCTUnwrap(firstPartialAt)
+        let ended = try XCTUnwrap(audioEndedAt)
+        XCTAssertLessThan(first, ended, "Streaming should show words while speech is still arriving")
+        XCTAssertGreaterThan(updateCount, 1)
+        XCTAssertTrue(latest.lowercased().contains("ask not what your country can do for you"))
+        print("[dictation-benchmark] first-partial=\(first.timeIntervalSince(started))s finalize=\(Date().timeIntervalSince(ended))s updates=\(updateCount)")
+    }
+
+    nonisolated private static func readBuffer(from file: AVAudioFile) throws -> sending AVAudioPCMBuffer {
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 1600))
+        try file.read(into: buffer)
+        return buffer
     }
 
     // MARK: - Download integrity guards
@@ -65,11 +122,7 @@ final class TranscribeCppStreamingEngineTests: XCTestCase {
     /// thrown error rather than ending empty — otherwise a missing helper
     /// yields a silently blank transcript with no way for the caller to know.
     func testStreamThrowsWhenHelperMissing() async throws {
-        try XCTSkipUnless(
-            TranscribeCppStreamingEngine.helperURL == nil,
-            "helper binary is installed; can't exercise the missing-helper path"
-        )
-        let engine = TranscribeCppStreamingEngine(modelURL: modelURL)
+        let engine = TranscribeCppStreamingEngine(modelURL: modelURL, helperURL: nil)
         let emptyAudio = AsyncStream<AVAudioPCMBuffer> { $0.finish() }
         let stream = engine.transcribeStream(from: emptyAudio, meetingStartedAt: Date())
 
@@ -81,5 +134,55 @@ final class TranscribeCppStreamingEngineTests: XCTestCase {
                 return XCTFail("expected .modelMissing, got \(error)")
             }
         }
+    }
+
+    func testHelperExitMustIncludeSuccessfulFinalization() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("helper-test-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let helper = root.appendingPathComponent("helper")
+        for (output, exitCode, expected) in [
+            (#"JT>{"final":""}"#, 0, Optional("")),
+            (#"JT>{"final":"complete"}"#, 0, Optional("complete")),
+            (#"JT>{"committed":"partial","tentative":"guess"}"#, 0, nil),
+            (#"JT>{"final":"incomplete"}"#, 1, nil)
+        ] {
+            try "#!/bin/sh\nprintf '%s\\n' '\(output)'\nexit \(exitCode)\n".write(to: helper, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: helper.path)
+            let engine = TranscribeCppStreamingEngine(modelURL: modelURL, helperURL: helper)
+            do {
+                let result = try await engine.transcribeSamples([])
+                XCTAssertEqual(result, expected, "Non-final or failed output must throw")
+            } catch {
+                XCTAssertNil(expected, "A successful final result should not throw: \(error)")
+            }
+        }
+    }
+
+    func testCancellingStreamTerminatesHelperWithoutWaitingForAudioEOF() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("helper-cancel-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let helper = root.appendingPathComponent("helper")
+        let pidFile = root.appendingPathComponent("pid")
+        try "#!/bin/sh\necho $$ > \"$1\"\nprintf '%s\\n' 'JT>{\"ready\":true}'\nexec /bin/sleep 30\n"
+            .write(to: helper, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: helper.path)
+        let engine = TranscribeCppStreamingEngine(modelURL: pidFile, helperURL: helper)
+        let task = Task {
+            for try await _ in engine.transcribeStream(from: AsyncStream { _ in }, meetingStartedAt: Date()) {}
+        }
+        defer { task.cancel() }
+        let deadline = Date().addingTimeInterval(2)
+        while !FileManager.default.fileExists(atPath: pidFile.path), Date() < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let pid = try XCTUnwrap(Int32(String(contentsOf: pidFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+        task.cancel()
+        let stoppedBy = Date().addingTimeInterval(2)
+        while kill(pid, 0) == 0, Date() < stoppedBy {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(kill(pid, 0), -1, "Cancel must stop the helper even while audio is open")
     }
 }

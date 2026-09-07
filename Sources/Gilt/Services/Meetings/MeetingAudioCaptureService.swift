@@ -433,7 +433,7 @@ final class MeetingAudioCaptureService: ObservableObject {
         // Push to live stream for streaming transcription.
         streamWrapper.send(converted)
 
-        let rms = averagePower(of: converted)
+        let rms = Self.averagePower(of: converted)
         Task { @MainActor [weak self] in
             self?.level = rms
         }
@@ -541,7 +541,7 @@ final class MeetingAudioCaptureService: ObservableObject {
     }
 
     /// Normalized RMS power in 0...1.
-    private func averagePower(of buffer: AVAudioPCMBuffer) -> Double {
+    nonisolated static func averagePower(of buffer: AVAudioPCMBuffer) -> Double {
         guard let channelData = buffer.floatChannelData else { return 0 }
         let channels = Int(buffer.format.channelCount)
         let frames = Int(buffer.frameLength)
@@ -915,4 +915,3 @@ extension AVAudioPCMBuffer {
         return result
     }
 }
-

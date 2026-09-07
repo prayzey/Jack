@@ -137,6 +137,7 @@ struct DictationWritingCaptionView: View {
                         captionContent
                             .id("writing-caption-anchor")
                     }
+                    .defaultScrollAnchor(.bottom)
                     .onChange(of: transcript) { _, _ in
                         refreshFrontier()
                         scrollToken = UUID()
@@ -156,6 +157,12 @@ struct DictationWritingCaptionView: View {
         }
         .frame(width: width, height: displayHeight, alignment: .topLeading)
         .clipped()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(L10n.string("dictation.overlay.transcript", default: "Live transcript"))
+        .accessibilityValue(transcript)
+        .onDisappear {
+            frontierMeasureTask?.cancel()
+        }
         .onChange(of: stableWordCount) { _, _ in
             refreshFrontier()
         }

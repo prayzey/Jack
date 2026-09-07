@@ -11,13 +11,17 @@ import OSLog
 ///   independent
 @MainActor
 final class DictationAudioCaptureService {
-    // ponytail: the coordinator only calls start/stop and reads the buffer
-    // stream + collected samples; nobody observes richer capture state.
-    // Reintroduce a CaptureState enum + ObservableObject if a UI ever needs it.
-    private var isRecording = false
+    // The coordinator samples capture metrics; audio callbacks stay off MainActor.
+    private(set) var isRecording = false
+    private var captureID: UUID?
+    private var stopTask: Task<Void, Never>?
+    private let requestAccess: @MainActor () async -> Bool
+
+    var level: Double { tapSink?.snapshotLevel() ?? 0 }
+    var elapsedSeconds: Double { startedAt.map { Date().timeIntervalSince($0) } ?? 0 }
 
     /// Async stream of mic buffers — handed to the transcription engine for
-    /// the live (decorative) streaming pass.
+    /// the live transcription pass.
     var audioBufferStream: AsyncStream<AVAudioPCMBuffer> { streamWrapper.stream }
 
     private let logger = Logger(subsystem: AppBrand.logSubsystem, category: "DictationAudio")
@@ -39,7 +43,8 @@ final class DictationAudioCaptureService {
     /// coordinator reads samples after the stream ends.
     private var finalizedCollectedSamples: [Float] = []
 
-    init() {
+    init(requestAccess: @escaping @MainActor () async -> Bool = DictationAudioCaptureService.requestMicrophoneAccess) {
+        self.requestAccess = requestAccess
         guard let format = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
             sampleRate: targetSampleRate,
@@ -58,7 +63,7 @@ final class DictationAudioCaptureService {
     // MARK: - Permission
 
     @discardableResult
-    func requestMicrophoneAccess() async -> Bool {
+    static func requestMicrophoneAccess() async -> Bool {
         let current = AVCaptureDevice.authorizationStatus(for: .audio)
         switch current {
         case .authorized:
@@ -91,8 +96,15 @@ final class DictationAudioCaptureService {
     ///         is for)
     func start(preferredDeviceUID: String? = nil, requestedGain: Float = 1.0) async throws {
         if isRecording { return }
+        let id = UUID()
+        captureID = id
+        stopTask?.cancel()
+        stopTask = nil
 
-        guard await requestMicrophoneAccess() else {
+        let granted = await requestAccess()
+        try Task.checkCancellation()
+        guard captureID == id else { throw CancellationError() }
+        guard granted else {
             throw DictationAudioError.permissionDenied
         }
 
@@ -128,12 +140,18 @@ final class DictationAudioCaptureService {
                 requestedGain: requestedGain
             )
         } catch {
+            guard captureID == id, !Task.isCancelled else { throw CancellationError() }
             audioEngine = nil
             if let dictationErr = error as? DictationAudioError, dictationErr == .audioSystemUnresponsive {
                 logger.error("AVAudioEngine build timed out — coreaudiod appears wedged")
             }
             throw error
         }
+
+        // A key release or Escape can arrive while permission/setup is awaiting.
+        // Never start the microphone after that session has already ended.
+        try Task.checkCancellation()
+        guard captureID == id else { throw CancellationError() }
 
         let engine = setup.engine
         audioEngine = engine
@@ -262,10 +280,23 @@ final class DictationAudioCaptureService {
     /// isn't clipped. Flash finalization injects trailing silence before `finish()`.
     private let trailingHangNanoseconds: UInt64 = 100_000_000
 
-    func stop() {
-        guard isRecording else { return }
-        Task { @MainActor [weak self] in
+    func stop(immediately: Bool = false) {
+        stopTask?.cancel()
+        stopTask = nil
+        guard isRecording else {
+            captureID = nil
+            tapSink = nil
+            streamWrapper.finish()
+            return
+        }
+        if immediately {
+            finalizeStop()
+            return
+        }
+        let id = captureID
+        stopTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: self?.trailingHangNanoseconds ?? 0)
+            guard !Task.isCancelled, self?.captureID == id else { return }
             self?.finalizeStop()
         }
     }
@@ -287,6 +318,7 @@ final class DictationAudioCaptureService {
         let duration = startedAt.map { Date().timeIntervalSince($0) } ?? 0
         startedAt = nil
         isRecording = false
+        captureID = nil
         streamWrapper.finish()
         logger.info("Dictation audio capture stopped after \(String(format: "%.2f", duration))s")
     }
@@ -323,6 +355,7 @@ private final class DictationAudioTapSink: @unchecked Sendable {
     private let streamWrapper: DictationAudioStreamWrapper
     private let lock = NSLock()
     private var collectedSamples: [Float] = []
+    private var level: Double = 0
     private var resampleConverter: AVAudioConverter?
     private var resampleSourceFormat: AVAudioFormat?
     var softwareGainFactor: Float = 1.0
@@ -349,6 +382,12 @@ private final class DictationAudioTapSink: @unchecked Sendable {
         return collectedSamples
     }
 
+    func snapshotLevel() -> Double {
+        lock.lock()
+        defer { lock.unlock() }
+        return level
+    }
+
     /// Waits for queued tap work, then returns the full sample tape.
     func drainAndSnapshot() -> [Float] {
         queue.sync {
@@ -365,8 +404,9 @@ private final class DictationAudioTapSink: @unchecked Sendable {
 
         guard let channelData = converted.floatChannelData?[0] else { return }
         let frames = Int(converted.frameLength)
+        let measuredLevel = MeetingAudioCaptureService.averagePower(of: converted)
         lock.lock()
-        collectedSamples.reserveCapacity(collectedSamples.count + frames)
+        level = measuredLevel
         collectedSamples.append(contentsOf: UnsafeBufferPointer(start: channelData, count: frames))
         lock.unlock()
     }
@@ -438,9 +478,9 @@ enum DictationAudioError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .permissionDenied: return "Microphone access is required for dictation."
-        case .noInput: return "No audio input detected. Connect a mic and try again."
-        case .audioSystemUnresponsive: return "Audio system isn't responding. Try again. If it keeps happening, restart your Mac."
+        case .permissionDenied: return L10n.string("dictation.error.permission", default: "Microphone access is required for dictation.")
+        case .noInput: return L10n.string("dictation.error.noInput", default: "No audio input detected. Connect a mic and try again.")
+        case .audioSystemUnresponsive: return L10n.string("dictation.error.audioSystem", default: "Audio system isn't responding. Try again. If it keeps happening, restart your Mac.")
         }
     }
 }

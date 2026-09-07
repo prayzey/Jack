@@ -22,11 +22,13 @@ final class DictationStore: ObservableObject {
     private let settingsKey = "GiltDictationSettings"
     private let historyURL: URL
     private let cacheRootURL: URL
+    private let defaults: UserDefaults
     /// Cap so the history file never balloons. 100 entries × ~200 chars = ~20KB.
     private let maxHistoryEntries = 100
 
-    init() {
-        let root = AppSupportLocator.giltDirectory().appendingPathComponent("Dictation", isDirectory: true)
+    init(defaults: UserDefaults = .standard, rootURL: URL? = nil) {
+        self.defaults = defaults
+        let root = rootURL ?? AppSupportLocator.giltDirectory().appendingPathComponent("Dictation", isDirectory: true)
         self.cacheRootURL = root
         self.historyURL = root.appendingPathComponent("history.json")
 
@@ -36,7 +38,7 @@ final class DictationStore: ObservableObject {
             attributes: nil
         )
 
-        if let data = UserDefaults.standard.data(forKey: settingsKey),
+        if let data = defaults.data(forKey: settingsKey),
            let decoded = try? JSONDecoder().decode(DictationSettings.self, from: data) {
             self.settings = decoded
         } else {
@@ -49,13 +51,13 @@ final class DictationStore: ObservableObject {
 
     private func persistSettings() {
         guard let data = try? JSONEncoder().encode(settings) else { return }
-        UserDefaults.standard.set(data, forKey: settingsKey)
+        defaults.set(data, forKey: settingsKey)
         // Force the write to disk immediately. Settings changes are rare,
         // deliberate user actions, but the app is frequently relaunched via
         // `jack restart` / a hard kill — without an explicit flush a just-
         // changed shortcut can be lost before UserDefaults' lazy periodic
         // sync runs, which reads to the user as "it reverted to the default."
-        UserDefaults.standard.synchronize()
+        defaults.synchronize()
     }
 
     // MARK: - History

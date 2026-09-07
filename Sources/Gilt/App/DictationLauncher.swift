@@ -53,15 +53,7 @@ final class DictationLauncher {
             coordinator?.stopSession()
         }
         askMonitor.onToggle = { [weak coordinator] in
-            // For ask mode, treat toggle as "start if idle in ask mode,
-            // stop otherwise". We can't reuse handleToggle() because that
-            // would start in polish mode on the idle path.
-            guard let coordinator else { return }
-            if coordinator.isActive {
-                coordinator.stopSession()
-            } else {
-                coordinator.startSession(mode: .askScreen)
-            }
+            coordinator?.handleToggle(mode: .askScreen)
         }
 
         actionsMonitor.onPress = { [weak coordinator] in
@@ -71,12 +63,7 @@ final class DictationLauncher {
             coordinator?.stopSession()
         }
         actionsMonitor.onToggle = { [weak coordinator] in
-            guard let coordinator else { return }
-            if coordinator.isActive {
-                coordinator.stopSession()
-            } else {
-                coordinator.startSession(mode: .actions)
-            }
+            coordinator?.handleToggle(mode: .actions)
         }
 
         // Phase + theme → overlay window. The store binding lets the overlay

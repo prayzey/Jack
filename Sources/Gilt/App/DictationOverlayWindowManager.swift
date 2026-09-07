@@ -66,8 +66,10 @@ final class DictationOverlayWindowManager {
             // Matches the coordinator's 0.5s done dwell before resetToIdle().
             scheduleHide(after: 0.45)
         case .failed:
-            removeEscapeMonitor()
-            scheduleHide(after: 1.2)
+            hideTask?.cancel()
+            hideTask = nil
+            installEscapeMonitor()
+            show()
         case .idle:
             removeEscapeMonitor()
             scheduleHide(after: 0)
@@ -79,7 +81,15 @@ final class DictationOverlayWindowManager {
     private func show() {
         let panel = ensurePanel()
         let wasVisible = panel.isVisible
-        repositionPanel(panel)
+        if wasVisible {
+            // A new session may arrive during the previous fade-out.
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0
+                panel.animator().alphaValue = 1
+            }
+        } else {
+            repositionPanel(panel)
+        }
         if !wasVisible {
             panel.alphaValue = 0
             panel.orderFrontRegardless()
@@ -102,7 +112,8 @@ final class DictationOverlayWindowManager {
                 ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
                 panel.animator().alphaValue = 0
             } completionHandler: { [weak panel] in
-                Task { @MainActor [weak panel] in
+                Task { @MainActor [weak self, weak panel] in
+                    guard self?.coordinator?.phase == .idle else { return }
                     panel?.orderOut(nil)
                 }
             }
