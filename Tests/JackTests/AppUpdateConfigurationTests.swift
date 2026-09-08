@@ -3,6 +3,17 @@ import Testing
 
 struct AppUpdateConfigurationTests {
     @Test
+    func developmentBundlesCannotInstallPublicReleases() {
+        var info: [String: Any] = [
+            "SUFeedURL": "https://example.com/appcast.xml",
+            "SUPublicEDKey": "abc123",
+            "JackBuildConfiguration": "debug"
+        ]
+        #expect(AppUpdateConfiguration.from(bundleInfo: info) == nil)
+        info["JackBuildConfiguration"] = "release"
+        #expect(AppUpdateConfiguration.from(bundleInfo: info) != nil)
+    }
+    @Test
     func buildsConfigurationWhenRequiredKeysExist() throws {
         let info: [String: Any] = [
             "SUFeedURL": "https://example.com/appcast.xml",

@@ -4,6 +4,13 @@ import XCTest
 
 @MainActor
 final class DictationCaptionMotionTests: XCTestCase {
+    func testResizeHandleHitTestingUsesTheSuperviewCoordinateSpace() {
+        let parent = NSView(frame: NSRect(x: 0, y: 0, width: 408, height: 244))
+        let handle = WindowFrameResizeHandleNSView(frame: NSRect(x: 377, y: 24, width: 14, height: 110))
+        parent.addSubview(handle)
+        XCTAssertTrue(handle.hitTest(NSPoint(x: 380, y: 70)) === handle)
+        XCTAssertNil(handle.hitTest(NSPoint(x: 200, y: 70)))
+    }
     func testCaptionWidthStaysUsableAndSurvivesSettingsReload() throws {
         XCTAssertEqual(DictationCaptionLayout.clampedCaptionWidth(.infinity), 360)
         XCTAssertEqual(DictationCaptionLayout.clampedCaptionWidth(-50), 320)

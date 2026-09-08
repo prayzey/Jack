@@ -3,6 +3,19 @@ import Testing
 
 struct AppVersionInfoTests {
     @Test
+    func identifiesDevelopmentAndReleaseWithoutChangingUpdateVersions() {
+        for configuration in ["debug", "release"] {
+            let version = AppVersionInfo.from(bundleInfo: [
+                "CFBundleShortVersionString": "1.0.4", "CFBundleVersion": "6",
+                "JackBuildConfiguration": configuration, "JackGitRevision": "abc1234"
+            ])
+            #expect(version.sidebarLabel.contains("DEV") == (configuration == "debug"))
+            #expect(version.settingsLabel.contains(configuration == "debug" ? "DEV" : "Release"))
+            #expect(version.settingsLabel.contains("abc1234"))
+            #expect(version.semanticVersionForUpdateChecks == "1.0.4")
+        }
+    }
+    @Test
     func buildsDisplayStringsFromBundleInfo() {
         let version = AppVersionInfo.from(bundleInfo: [
             "CFBundleShortVersionString": "1.0.2",

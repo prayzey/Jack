@@ -1077,3 +1077,6 @@
 "dictation.polish.live.description" = "Abgeschlossene Formulierungen im Untertitel verbessern, während du weitersprichst.";
 "dictation.caption.wider" = "Untertitel verbreitern";
 "dictation.caption.narrower" = "Untertitel verschmälern";
+
+"settings.build.location" = "App-Speicherort";
+"settings.build.development" = "Dies ist ein lokaler Entwicklungsbuild.";

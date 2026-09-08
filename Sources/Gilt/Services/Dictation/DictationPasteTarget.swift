@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import CryptoKit
+import OSLog
 
 /// An ephemeral destination snapshot. Never persisted; keep only a digest of
 /// the field's contents so a later edit can prevent an unexpected paste.
@@ -28,9 +29,19 @@ struct DictationPasteTarget: @unchecked Sendable {
 
     @MainActor
     func isCurrent() async -> Bool {
-        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else { return false }
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else {
+            Logger(subsystem: AppBrand.logSubsystem, category: "DictationDelivery")
+                .notice("Destination verification: frontmost app changed")
+            return false
+        }
         let current = await Task.detached { Self.capture(pid: pid) }.value
-        guard let current else { return false }
+        guard let current else {
+            Logger(subsystem: AppBrand.logSubsystem, category: "DictationDelivery")
+                .notice("Destination verification: focused text field unavailable")
+            return false
+        }
+        Logger(subsystem: AppBrand.logSubsystem, category: "DictationDelivery")
+            .notice("Destination verification: sameField=\(CFEqual(element, current.element), privacy: .public) sameText=\(valueDigest == current.valueDigest, privacy: .public) sameSelection=\(selection?.location == current.selection?.location && selection?.length == current.selection?.length, privacy: .public)")
         return NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
             && CFEqual(element, current.element)
             && valueDigest == current.valueDigest

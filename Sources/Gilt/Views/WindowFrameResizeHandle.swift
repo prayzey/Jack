@@ -194,7 +194,7 @@ class WindowInteractionHandleNSView: NSView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        bounds.contains(point) ? self : nil
+        bounds.contains(convert(point, from: superview)) ? self : nil
     }
 
     override func viewDidMoveToWindow() {
@@ -240,7 +240,7 @@ final class WindowFrameResizeHandleNSView: WindowInteractionHandleNSView {
     override func hitTest(_ point: NSPoint) -> NSView? {
         let outset = edge.hitTestOutset
         let expanded = bounds.insetBy(dx: -outset, dy: -outset)
-        return expanded.contains(point) ? self : nil
+        return expanded.contains(convert(point, from: superview)) ? self : nil
     }
 
     override func viewDidMoveToWindow() {
@@ -289,7 +289,9 @@ final class WindowFrameResizeHandleNSView: WindowInteractionHandleNSView {
 
     override func mouseDown(with event: NSEvent) {
         guard let window else { return }
-        initialMouseLocation = NSEvent.mouseLocation
+        // Track the delivered event in screen coordinates. Polling the global
+        // pointer can read a different position, especially with assisted input.
+        initialMouseLocation = window.convertPoint(toScreen: event.locationInWindow)
         initialFrame = window.frame
 
         // Hold the resize cursor for the whole drag. setFrame() rebuilds the
@@ -320,7 +322,7 @@ final class WindowFrameResizeHandleNSView: WindowInteractionHandleNSView {
                 edge: self.edge,
                 initialFrame: self.initialFrame,
                 startMouse: self.initialMouseLocation,
-                currentMouse: NSEvent.mouseLocation,
+                currentMouse: window.convertPoint(toScreen: event.locationInWindow),
                 minSize: self.minSize,
                 maxSize: self.maxSize
             )

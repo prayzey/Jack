@@ -112,6 +112,7 @@ struct DictationOverlayView: View {
             Spacer(minLength: 0)
             resizeHandle(.right)
         }
+        .padding(.horizontal, DictationCaptionLayout.shadowMargin - WindowResizeHandleMetrics.edgeThickness / 2)
         .frame(height: DictationCaptionLayout.cardHeight)
         .padding(.bottom, DictationCaptionLayout.shadowMargin)
     }
@@ -129,7 +130,7 @@ struct DictationOverlayView: View {
                 store.settings.captionWidth = Double(DictationCaptionLayout.clampedCaptionWidth(frame.width - margin))
             }
         )
-        .frame(width: DictationCaptionLayout.shadowMargin)
+        .frame(width: WindowResizeHandleMetrics.edgeThickness)
         .help(L10n.string("dictation.caption.resize", default: "Drag to widen or narrow the caption"))
     }
 

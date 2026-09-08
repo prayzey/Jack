@@ -1087,3 +1087,6 @@
 "dictation.polish.live.description" = "Clean up completed phrases in the caption while you keep talking.";
 "dictation.caption.wider" = "Widen caption";
 "dictation.caption.narrower" = "Narrow caption";
+
+"settings.build.location" = "App location";
+"settings.build.development" = "This is a local development build.";

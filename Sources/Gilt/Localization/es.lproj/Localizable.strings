@@ -1077,3 +1077,6 @@
 "dictation.polish.live.description" = "Mejora las frases completas del subtítulo mientras sigues hablando.";
 "dictation.caption.wider" = "Ampliar subtítulo";
 "dictation.caption.narrower" = "Estrechar subtítulo";
+
+"settings.build.location" = "Ubicación de la app";
+"settings.build.development" = "Esta es una compilación local de desarrollo.";

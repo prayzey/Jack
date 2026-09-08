@@ -1623,6 +1623,21 @@ struct SettingsView: View {
                             .foregroundStyle(SettingsTheme.textPrimary)
                             .textSelection(.enabled)
                     }
+                    if appVersion.configuration == "debug" {
+                        SettingsDivider()
+                        SettingsRow(
+                            title: L10n.string("settings.build.location", default: "App location"),
+                            subtitle: L10n.string("settings.build.development", default: "This is a local development build."),
+                            icon: "hammer"
+                        ) {
+                            Text(Bundle.main.bundleURL.path)
+                                .font(.system(size: 11, design: .monospaced))
+                                .multilineTextAlignment(.trailing)
+                                .frame(maxWidth: 260)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .textSelection(.enabled)
+                        }
+                    }
                     SettingsDivider()
                     SettingsRow(
                         title: SettingsCopy.appLanguageTitle(),

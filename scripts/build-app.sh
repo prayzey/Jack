@@ -71,6 +71,9 @@ fi
 
 # Short commit hash for identification
 COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+    COMMIT="${COMMIT}+modified"
+fi
 
 echo "Building $APP_NAME v${VERSION} (${BUILD}) [$CONFIG] @ $COMMIT..."
 swift build -c "$CONFIG"
@@ -225,6 +228,10 @@ cat > "$CONTENTS/Info.plist" << PLIST
     <string>${BUILD}</string>
     <key>CFBundleShortVersionString</key>
     <string>${VERSION}</string>
+    <key>JackBuildConfiguration</key>
+    <string>${CONFIG}</string>
+    <key>JackGitRevision</key>
+    <string>${COMMIT}</string>
     <key>CFBundleExecutable</key>
     <string>${APP_NAME}</string>
     <key>CFBundlePackageType</key>

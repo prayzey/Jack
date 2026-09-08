@@ -40,6 +40,7 @@ final class UpdateCheckService: ObservableObject {
 
     /// Check for updates. Called once on app launch.
     func checkOnLaunch() {
+        guard AppVersionInfo.current.configuration != "debug" else { return }
         Task {
             await check()
         }

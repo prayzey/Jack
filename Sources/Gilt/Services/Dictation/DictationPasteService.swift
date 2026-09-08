@@ -2,6 +2,7 @@ import AppKit
 import Carbon.HIToolbox
 import CoreGraphics
 import Foundation
+import OSLog
 
 /// Pastes a dictation result into the frontmost app.
 ///
@@ -42,6 +43,8 @@ final class DictationPasteService {
         else { mayPaste = false }
         guard !Task.isCancelled else { return false }
         guard mayPaste else {
+            Logger(subsystem: AppBrand.logSubsystem, category: "DictationDelivery")
+                .notice("Copied instead of pasting: destinationSnapshotPresent=\(target != nil, privacy: .public)")
             copyOnly(text, saveToHistory: !restorePasteboard)
             return false
         }
@@ -51,7 +54,13 @@ final class DictationPasteService {
         copyOnly(text, saveToHistory: !restorePasteboard)
         let transcriptChangeCount = pasteboard.changeCount
         // If paste cannot be requested, leave the result available for Cmd+V.
-        guard postPaste() else { return false }
+        guard postPaste() else {
+            Logger(subsystem: AppBrand.logSubsystem, category: "DictationDelivery")
+                .notice("Copied instead of pasting: paste shortcut unavailable")
+            return false
+        }
+        Logger(subsystem: AppBrand.logSubsystem, category: "DictationDelivery")
+            .notice("Paste shortcut requested for the verified destination")
 
         guard restorePasteboard, let previousItems else { return true }
         Task { @MainActor in
