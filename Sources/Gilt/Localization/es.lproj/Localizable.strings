@@ -1051,7 +1051,9 @@
 "dictation.error.outputLimit" = "La respuesta de la IA local superó su límite.";
 "dictation.overlay.manualPaste" = "Pulsa ⌘V donde quieras insertar el texto.";
 "dictation.overlay.durationLimit" = "El dictado finaliza automáticamente a los 10 minutos.";
-"dictation.overlay.endingSoon" = "Termina a los 10:00";
+"dictation.overlay.endingSoon" = "Terminando pronto";
+"dictation.caption.resetWidth" = "Restablecer el ancho del texto";
+"dictation.caption.resize" = "Arrastra para ampliar o reducir el ancho del texto";
 "dictation.history.save" = "Guardar dictados recientes";
 "dictation.history.privacy" = "Conserva los últimos 100 dictados en este Mac. Al desactivarlo, se dejan de guardar nuevos dictados. El audio nunca se guarda.";
 "dictation.history.title" = "Dictados recientes";
@@ -1068,3 +1070,10 @@
 "dictation.overlay.polishSkipped" = "Se omitió la mejora con IA; tu transcripción se conserva.";
 "dictation.paste.automatic" = "Pegar automáticamente";
 "dictation.paste.destination" = "Si cambias de app, editas el campo o mueves el cursor, Jack copia el texto para que lo pegues.";
+
+"dictation.polish.enabled" = "Pulir el dictado con IA";
+"dictation.polish.balanced.description" = "Corrige la gramática, elimina los falsos comienzos y aplica tus correcciones habladas sin cambiar el significado.";
+"dictation.polish.live" = "Pulir mientras hablas";
+"dictation.polish.live.description" = "Mejora las frases completas del subtítulo mientras sigues hablando.";
+"dictation.caption.wider" = "Ampliar subtítulo";
+"dictation.caption.narrower" = "Estrechar subtítulo";

@@ -1082,25 +1082,7 @@ struct DictationSettingsView: View {
 
     // MARK: - Style + list-formatting (Style sub-tab)
 
-    /// The Style sub-tab. Two stacked sections that together answer the
-    /// question "how does my dictation come out?":
-    ///   1. **Style picker** — Qwen's "voice" (Conversation vs Vibe Coding)
-    ///      and how aggressively it polishes the wording.
-    ///   2. **Vocabulary** — profession packs + user custom terms that
-    ///      restore canonical spellings ("ChatGPT", "useEffect", "API")
-    ///      even without the AI polish.
-    ///
-    /// Smart formatting (punctuation commands, sentence capitalization,
-    /// curly quotes, list/paragraph structure) is intentionally invisible —
-    /// it just always runs on the output.
-    /// Style sub-tab content.
-    ///
-    /// Smart-formatting controls used to live here as their own section
-    /// (punctuation commands, sentence capitalization, curly quotes,
-    /// list + paragraph structure). They were removed from the UI to keep
-    /// this page short — every one of those behaviours still runs
-    /// automatically using the defaults baked into `DictationSettings`,
-    /// the user just doesn't see toggles for them anymore.
+    /// One cleanup switch and a voice choice; engine controls live in Advanced.
     private var styleSubTabSection: some View {
         VStack(spacing: 18) {
             styleSection
@@ -1117,8 +1099,8 @@ struct DictationSettingsView: View {
         SettingsSection(L10n.string("ui.style", default: "Style")) {
             VStack(alignment: .leading, spacing: 0) {
                 SettingsToggleRow(
-                    title: "Polish dictation with AI",
-                    subtitle: "Cleans up filler words and fixes grammar using the on-device Qwen model.",
+                    title: L10n.string("dictation.polish.enabled", default: "Polish dictation with AI"),
+                    subtitle: L10n.string("dictation.polish.balanced.description", default: "Fix grammar, remove false starts, and apply spoken corrections while keeping your meaning."),
                     icon: "sparkles",
                     isOn: Binding(
                         get: { store.settings.postProcessEnabled },
@@ -1127,44 +1109,6 @@ struct DictationSettingsView: View {
                 )
 
                 if store.settings.postProcessEnabled {
-                    SettingsDivider()
-
-                    SettingsToggleRow(
-                        title: "Polish while you speak",
-                        subtitle: "Finished sentences clean themselves up live in the caption, so corrections like \u{201C}oops, I meant onions\u{201D} heal before you even finish.",
-                        icon: "wand.and.sparkles",
-                        isOn: Binding(
-                            get: { store.settings.livePolishEnabled },
-                            set: { store.settings.livePolishEnabled = $0 }
-                        )
-                    )
-
-                    Group {
-                        VStack(alignment: .leading, spacing: 12) {
-                            HStack(alignment: .firstTextBaseline) {
-                                Text(L10n.string("dictation.polish.engine", default: "Polish engine"))
-                                    .font(.system(size: 14, weight: .medium))
-                                    .foregroundStyle(SettingsTheme.textPrimary)
-                                Spacer()
-                            }
-
-                            SettingsSegmentedPicker(
-                                options: LivePolishEngine.allCases,
-                                selection: store.settings.livePolishEngine,
-                                namespace: livePolishEngineNamespace,
-                                label: { $0.displayName },
-                                action: { store.settings.livePolishEngine = $0 }
-                            )
-
-                            Text(store.settings.livePolishEngine.description)
-                                .font(.system(size: 12))
-                                .foregroundStyle(SettingsTheme.textSecondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 14)
-                    }
-
                     SettingsDivider()
 
                     VStack(alignment: .leading, spacing: 12) {
@@ -1187,39 +1131,6 @@ struct DictationSettingsView: View {
                             .font(.system(size: 12))
                             .foregroundStyle(SettingsTheme.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 14)
-
-                    SettingsDivider()
-
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack(alignment: .firstTextBaseline) {
-                            Text(L10n.string("ui.polish.level", default: "Polish level"))
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundStyle(SettingsTheme.textPrimary)
-                            Spacer()
-                            Text(store.settings.level.displayName)
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(SettingsTheme.textSecondary)
-                        }
-
-                        LazyVGrid(
-                            columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
-                            spacing: 12
-                        ) {
-                            ForEach(DictationLevel.allCases) { level in
-                                DictationLevelCard(
-                                    level: level,
-                                    isSelected: store.settings.level == level,
-                                    sampleText: sampleText(for: level)
-                                )
-                                .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                                .onTapGesture {
-                                    store.settings.level = level
-                                }
-                            }
-                        }
                     }
                     .padding(.horizontal, 18)
                     .padding(.vertical, 14)
@@ -1404,6 +1315,46 @@ struct DictationSettingsView: View {
     private var advancedSection: some View {
         SettingsSection(L10n.string("ui.advanced", default: "Advanced")) {
             VStack(spacing: 0) {
+                if store.settings.postProcessEnabled {
+                    SettingsToggleRow(
+                        title: L10n.string("dictation.polish.live", default: "Polish while you speak"),
+                        subtitle: L10n.string("dictation.polish.live.description", default: "Clean up completed phrases in the caption while you keep talking."),
+                        icon: "wand.and.sparkles",
+                        isOn: Binding(
+                            get: { store.settings.livePolishEnabled },
+                            set: { store.settings.livePolishEnabled = $0 }
+                        )
+                    )
+
+                    Group {
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(L10n.string("dictation.polish.engine", default: "Polish engine"))
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundStyle(SettingsTheme.textPrimary)
+                                Spacer()
+                            }
+
+                            SettingsSegmentedPicker(
+                                options: LivePolishEngine.allCases,
+                                selection: store.settings.livePolishEngine,
+                                namespace: livePolishEngineNamespace,
+                                label: { $0.displayName },
+                                action: { store.settings.livePolishEngine = $0 }
+                            )
+
+                            Text(store.settings.livePolishEngine.description)
+                                .font(.system(size: 12))
+                                .foregroundStyle(SettingsTheme.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 14)
+                    }
+
+                    SettingsDivider()
+                }
+
                 SettingsToggleRow(
                     title: "Dictation enabled",
                     subtitle: "Master switch for the global dictation hotkey.",
@@ -1495,93 +1446,7 @@ struct DictationSettingsView: View {
         }
     }
 
-    // MARK: - Helpers
-
-    private func sampleText(for level: DictationLevel) -> String {
-        level.sample(for: store.settings.style)
-    }
 }
-
-private struct DictationLevelCard: View {
-    let level: DictationLevel
-    let isSelected: Bool
-    let sampleText: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(level.displayName)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(SettingsTheme.textPrimary)
-                Spacer()
-                if isSelected {
-                    Text(L10n.string("ui.active", default: "Active"))
-                        .font(.system(size: 10, weight: .semibold))
-                        .tracking(0.4)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(
-                            Capsule().fill(SettingsTheme.primaryAccent.opacity(0.12))
-                        )
-                        .foregroundStyle(SettingsTheme.primaryAccent)
-                }
-            }
-
-            dots
-
-            Text(level.tagline)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(SettingsTheme.textPrimary)
-
-            Text("\u{201C}\(sampleText)\u{201D}")
-                .font(.system(size: 11, design: .serif))
-                .italic()
-                .foregroundStyle(SettingsTheme.textSecondary)
-                .lineLimit(3)
-                .multilineTextAlignment(.leading)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(SettingsTheme.cardBackground)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(
-                    isSelected
-                        ? SettingsTheme.primaryAccent.opacity(0.85)
-                        : SettingsTheme.border,
-                    lineWidth: isSelected ? 1.5 : 0.5
-                )
-        )
-        .shadow(
-            color: isSelected
-                ? SettingsTheme.primaryAccent.opacity(0.10)
-                : Color.black.opacity(0.03),
-            radius: isSelected ? 6 : 3,
-            x: 0,
-            y: isSelected ? 3 : 1
-        )
-        .animation(.easeOut(duration: 0.15), value: isSelected)
-    }
-
-    private var dots: some View {
-        HStack(spacing: 4) {
-            ForEach(0..<4, id: \.self) { i in
-                Capsule()
-                    .fill(i < level.dotCount
-                        ? (isSelected
-                            ? SettingsTheme.primaryAccent
-                            : SettingsTheme.textPrimary.opacity(0.7))
-                        : SettingsTheme.border)
-                    .frame(width: 18, height: 4)
-            }
-        }
-    }
-}
-
 
 /// Compact custom-vocabulary row. Replaces the always-visible minus button
 /// with an X icon that only appears on hover — the resting state is clean,

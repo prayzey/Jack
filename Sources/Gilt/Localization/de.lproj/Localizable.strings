@@ -1051,7 +1051,9 @@
 "dictation.error.outputLimit" = "Die Antwort der lokalen KI hat das Limit überschritten.";
 "dictation.overlay.manualPaste" = "Drücke ⌘V an der gewünschten Stelle.";
 "dictation.overlay.durationLimit" = "Das Diktat endet automatisch nach 10 Minuten.";
-"dictation.overlay.endingSoon" = "Endet bei 10:00";
+"dictation.overlay.endingSoon" = "Endet gleich";
+"dictation.caption.resetWidth" = "Textfeldbreite zurücksetzen";
+"dictation.caption.resize" = "Ziehen, um das Textfeld breiter oder schmaler zu machen";
 "dictation.history.save" = "Letzte Diktate speichern";
 "dictation.history.privacy" = "Speichert die letzten 100 Diktate auf diesem Mac. Ausschalten verhindert neue Einträge. Audio wird nie gespeichert.";
 "dictation.history.title" = "Letzte Diktate";
@@ -1068,3 +1070,10 @@
 "dictation.overlay.polishSkipped" = "KI-Überarbeitung übersprungen; deine Transkription bleibt erhalten.";
 "dictation.paste.automatic" = "Automatisch einfügen";
 "dictation.paste.destination" = "Wenn du die App wechselst, das Feld bearbeitest oder den Cursor bewegst, kopiert Jack den Text zum manuellen Einfügen.";
+
+"dictation.polish.enabled" = "Diktat mit KI überarbeiten";
+"dictation.polish.balanced.description" = "Grammatik korrigieren, Satzabbrüche entfernen und gesprochene Korrekturen übernehmen, ohne die Bedeutung zu ändern.";
+"dictation.polish.live" = "Während des Sprechens überarbeiten";
+"dictation.polish.live.description" = "Abgeschlossene Formulierungen im Untertitel verbessern, während du weitersprichst.";
+"dictation.caption.wider" = "Untertitel verbreitern";
+"dictation.caption.narrower" = "Untertitel verschmälern";

@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// Floating dictation overlay — a fixed-shape card (Handy-style): the box
-/// never grows or moves; long transcripts scroll up inside the text area
-/// while a control bar (record dot, level meter, timer, cancel) stays pinned
+/// Floating dictation overlay with an adjustable width and fixed height.
+/// Long transcripts follow the newest line inside the text area
+/// while a control bar (level meter, status, finish, cancel) stays pinned
 /// below. Processing keeps the same shell, and failures remain until dismissed.
 struct DictationOverlayView: View {
     @ObservedObject var coordinator: DictationCoordinator
@@ -11,7 +11,6 @@ struct DictationOverlayView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var displayPhase: DictationPhase { coordinator.phase }
-    @State private var doneAppeared = false
 
     private var palette: DictationPillPalette { store.settings.pillTheme.palette }
 
@@ -20,43 +19,57 @@ struct DictationOverlayView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            Spacer(minLength: 0)
-            Group {
-                if case .failed(let reason) = displayPhase {
-                    failureCard(reason: reason)
-                } else if displayPhase == .done {
-                    doneCard
-                } else if isProcessingPhase(displayPhase) {
-                    processingCard
-                } else {
-                    listeningCard
+        GeometryReader { geometry in
+            let captionWidth = max(1, geometry.size.width - DictationCaptionLayout.shadowMargin * 2)
+            VStack(spacing: 0) {
+                Spacer(minLength: 0)
+                Group {
+                    if case .failed(let reason) = displayPhase {
+                        failureCard(reason: reason, width: captionWidth)
+                    } else if displayPhase == .done {
+                        doneCard(width: captionWidth)
+                    } else {
+                        sessionCard(width: captionWidth)
+                    }
                 }
+                .transition(.opacity)
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: displayPhase)
+                .frame(width: captionWidth)
             }
-            .frame(width: DictationCaptionLayout.captionWidth)
+            .padding(DictationCaptionLayout.shadowMargin)
+            .frame(
+                width: geometry.size.width,
+                height: DictationCaptionLayout.maxHeight + DictationCaptionLayout.shadowMargin * 2,
+                alignment: .bottom
+            )
         }
-        .padding(DictationCaptionLayout.shadowMargin)
-        .frame(
-            width: DictationCaptionLayout.captionWidth + DictationCaptionLayout.shadowMargin * 2,
-            height: DictationCaptionLayout.maxHeight + DictationCaptionLayout.shadowMargin * 2,
-            alignment: .bottom
-        )
-        .onChange(of: coordinator.phase) { _, newPhase in
-            if newPhase != .done { doneAppeared = false }
+        .overlay(alignment: .bottom) { resizeHandles }
+        .contextMenu {
+            Button(L10n.string("dictation.caption.wider", default: "Widen caption")) {
+                store.settings.captionWidth = Double(DictationCaptionLayout.clampedCaptionWidth(store.settings.captionWidth + 80))
+            }
+            Button(L10n.string("dictation.caption.narrower", default: "Narrow caption")) {
+                store.settings.captionWidth = Double(DictationCaptionLayout.clampedCaptionWidth(store.settings.captionWidth - 80))
+            }
+            Button(L10n.string("dictation.caption.resetWidth", default: "Reset caption width")) {
+                store.settings.captionWidth = Double(DictationCaptionLayout.captionWidth)
+            }
         }
     }
 
-    // MARK: - Listening card
+    // MARK: - Session card
 
-    private var listeningCard: some View {
+    // Keep the caption's identity through listening, transcription and cleanup.
+    // Replacing it per phase resets its cursor and scroll position.
+    private func sessionCard(width: CGFloat) -> some View {
         VStack(spacing: 0) {
             DictationWritingCaptionView(
                 transcript: coordinator.liveTranscript,
                 stableWordCount: coordinator.liveTranscriptStableWordCount,
-                level: coordinator.level,
+                level: isProcessingPhase(displayPhase) ? 0 : coordinator.level,
                 palette: palette,
                 frontierColor: captionFrontierColor,
-                width: DictationCaptionLayout.captionWidth,
+                width: width,
                 minHeight: DictationCaptionLayout.textAreaHeight,
                 maxHeight: DictationCaptionLayout.textAreaHeight,
                 fontSize: DictationCaptionLayout.fontSize,
@@ -65,7 +78,7 @@ struct DictationOverlayView: View {
                 leadingContentInset: modeGlyphReserve
             )
             .overlay(alignment: .topLeading) {
-                if coordinator.liveTranscript.isEmpty {
+                if coordinator.liveTranscript.isEmpty, !isProcessingPhase(displayPhase) {
                     Text(coordinator.isPreparing
                          ? L10n.string("dictation.overlay.preparing", default: "Starting microphone…")
                          : L10n.string("dictation.overlay.ready", default: "Speak when you're ready"))
@@ -86,23 +99,58 @@ struct DictationOverlayView: View {
         .overlay(alignment: .topLeading) {
             modeGlyph
         }
+        .overlay(alignment: .trailing) {
+            Capsule().fill(palette.captionText.opacity(0.28))
+                .frame(width: 2, height: 14).padding(.trailing, 3)
+                .allowsHitTesting(false)
+        }
+    }
+
+    private var resizeHandles: some View {
+        HStack(spacing: 0) {
+            resizeHandle(.left)
+            Spacer(minLength: 0)
+            resizeHandle(.right)
+        }
+        .frame(height: DictationCaptionLayout.cardHeight)
+        .padding(.bottom, DictationCaptionLayout.shadowMargin)
+    }
+
+    private func resizeHandle(_ edge: WindowResizeEdge) -> some View {
+        let margin = DictationCaptionLayout.shadowMargin * 2
+        return WindowFrameResizeHandle(
+            edge: edge,
+            minSize: CGSize(width: DictationCaptionLayout.minimumCaptionWidth + margin,
+                            height: DictationCaptionLayout.sessionPanelSize.height),
+            maxSize: CGSize(width: DictationCaptionLayout.maximumCaptionWidth + margin,
+                            height: DictationCaptionLayout.sessionPanelSize.height),
+            onResizeFinished: { frame in
+                // The existing AppKit handle owns live movement; persist only on release.
+                store.settings.captionWidth = Double(DictationCaptionLayout.clampedCaptionWidth(frame.width - margin))
+            }
+        )
+        .frame(width: DictationCaptionLayout.shadowMargin)
+        .help(L10n.string("dictation.caption.resize", default: "Drag to widen or narrow the caption"))
     }
 
     /// Recording feedback and explicit finish/cancel controls.
     private var controlBar: some View {
         HStack(spacing: 8) {
             cancelButton
-            DictationLevelMeter(level: coordinator.level, color: captionFrontierColor)
-                .accessibilityHidden(true)
-            Text(recordingStatus)
+            ZStack {
+                if isProcessingPhase(displayPhase) {
+                    ProgressView().controlSize(.small)
+                } else {
+                    DictationLevelMeter(level: coordinator.level, color: captionFrontierColor)
+                }
+            }
+            .frame(width: 63, height: 16)
+            .accessibilityHidden(true)
+            Text(isProcessingPhase(displayPhase) ? processingLabel : recordingStatus)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(palette.captionText.opacity(0.8))
+                .contentTransition(.opacity)
             Spacer(minLength: 4)
-            Text(MeetingTranscriptChunk.formatTimestamp(coordinator.elapsedSeconds))
-                .font(.system(size: 11, weight: .medium).monospacedDigit())
-                .foregroundStyle(palette.captionText.opacity(0.7))
-                .accessibilityLabel(L10n.string("dictation.overlay.duration", default: "Recording duration"))
-                .help(L10n.string("dictation.overlay.durationLimit", default: "Dictation finishes automatically at 10 minutes."))
             Button(action: onStop) {
                 Image(systemName: "checkmark")
                     .font(.system(size: 11, weight: .bold))
@@ -114,6 +162,9 @@ struct DictationOverlayView: View {
             .buttonStyle(.plain)
             .accessibilityLabel(finishLabel)
             .help(finishLabel)
+            .opacity(isProcessingPhase(displayPhase) ? 0 : 1)
+            .disabled(isProcessingPhase(displayPhase))
+            .accessibilityHidden(isProcessingPhase(displayPhase))
         }
         .padding(.horizontal, 10)
         .frame(height: DictationCaptionLayout.controlBarHeight)
@@ -122,7 +173,7 @@ struct DictationOverlayView: View {
     private var recordingStatus: String {
         if coordinator.isPreparing { return L10n.string("dictation.overlay.starting", default: "Starting…") }
         if coordinator.elapsedSeconds >= DictationAudioCaptureService.maximumDurationSeconds - 30 {
-            return L10n.string("dictation.overlay.endingSoon", default: "Ends at 10:00")
+            return L10n.string("dictation.overlay.endingSoon", default: "Finishing soon")
         }
         return L10n.string("dictation.overlay.listening", default: "Listening")
     }
@@ -152,7 +203,7 @@ struct DictationOverlayView: View {
         .help(L10n.string("dictation.overlay.cancelHint", default: "Cancel dictation (Esc)"))
     }
 
-    private func failureCard(reason: String) -> some View {
+    private func failureCard(reason: String, width: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(L10n.string("dictation.overlay.failed", default: "Dictation stopped"))
                 .font(.system(size: 13, weight: .semibold))
@@ -179,55 +230,20 @@ struct DictationOverlayView: View {
         }
         .foregroundStyle(palette.captionText.opacity(0.95))
         .padding(14)
-        .frame(width: DictationCaptionLayout.captionWidth, alignment: .leading)
+        .frame(width: width, alignment: .leading)
         .background(captionBackground)
         .shadow(color: shadowColor.opacity(0.5), radius: 10, y: 4)
-    }
-
-    // MARK: - Processing card
-
-    private var processingCard: some View {
-        VStack(spacing: 0) {
-            DictationWritingCaptionView(
-                transcript: coordinator.liveTranscript,
-                stableWordCount: coordinator.liveTranscriptStableWordCount,
-                level: 0,
-                palette: palette,
-                frontierColor: captionFrontierColor,
-                width: DictationCaptionLayout.captionWidth,
-                minHeight: DictationCaptionLayout.textAreaHeight,
-                maxHeight: DictationCaptionLayout.textAreaHeight,
-                fontSize: DictationCaptionLayout.fontSize,
-                horizontalPadding: DictationCaptionLayout.horizontalPadding,
-                verticalPadding: DictationCaptionLayout.verticalPadding,
-                leadingContentInset: modeGlyphReserve
-            )
-            HStack(spacing: 8) {
-                cancelButton
-                ProgressView().controlSize(.small)
-                Text(processingLabel)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(palette.captionText.opacity(0.85))
-                Spacer()
-            }
-            .padding(.horizontal, 10)
-            .frame(height: DictationCaptionLayout.controlBarHeight)
-        }
-        .background(captionBackground)
-        .shadow(color: shadowColor.opacity(0.5), radius: 10, y: 4)
-        .overlay(alignment: .topLeading) { modeGlyph }
     }
 
     // MARK: - Done card
 
-    /// The after-state: same fixed shell, a spring-in checkmark, and a one-word
+    /// The after-state: same fixed shell, a quiet checkmark, and a short
     /// confirmation. Kept quiet on purpose — it flashes for under a second.
-    private var doneCard: some View {
+    private func doneCard(width: CGFloat) -> some View {
         HStack(spacing: 10) {
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(captionFrontierColor)
-                .scaleEffect(reduceMotion || doneAppeared ? 1 : 0.4)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(doneLabel)
@@ -248,7 +264,7 @@ struct DictationOverlayView: View {
         }
         .padding(.horizontal, 12)
         .frame(
-            width: DictationCaptionLayout.captionWidth,
+            width: width,
             height: DictationCaptionLayout.cardHeight
         )
         .background(captionBackground)
@@ -257,12 +273,6 @@ struct DictationOverlayView: View {
                 .stroke(captionFrontierColor.opacity(0.45), lineWidth: captionBorderWidth)
         )
         .shadow(color: shadowColor.opacity(0.5), radius: 10, y: 4)
-        .opacity(doneAppeared ? 1 : 0.6)
-        .onAppear {
-            withAnimation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.62)) {
-                doneAppeared = true
-            }
-        }
     }
 
     private var doneLabel: String {
@@ -402,6 +412,7 @@ struct DictationOverlayView: View {
 struct DictationLevelMeter: View {
     let level: Double
     let color: Color
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let dotCount = 11
 
@@ -413,7 +424,7 @@ struct DictationLevelMeter: View {
                     .frame(width: 3, height: height(for: index))
             }
         }
-        .animation(.easeOut(duration: 0.12), value: level)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: level)
         .frame(height: 14, alignment: .center)
     }
 

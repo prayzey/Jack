@@ -1061,7 +1061,9 @@
 "dictation.error.outputLimit" = "The local AI response exceeded its limit.";
 "dictation.overlay.manualPaste" = "Press ⌘V where you want the text.";
 "dictation.overlay.durationLimit" = "Dictation finishes automatically at 10 minutes.";
-"dictation.overlay.endingSoon" = "Ends at 10:00";
+"dictation.overlay.endingSoon" = "Finishing soon";
+"dictation.caption.resetWidth" = "Reset caption width";
+"dictation.caption.resize" = "Drag to widen or narrow the caption";
 "dictation.history.save" = "Save recent dictations";
 "dictation.history.privacy" = "Keep the last 100 dictations on this Mac. Turning this off stops new saves. Audio is never saved.";
 "dictation.history.title" = "Recent dictations";
@@ -1078,3 +1080,10 @@
 "dictation.overlay.polishSkipped" = "AI cleanup skipped; your transcript is preserved.";
 "dictation.paste.automatic" = "Paste automatically";
 "dictation.paste.destination" = "If you change apps, edit the field, or move the cursor, Jack copies the text for you instead.";
+
+"dictation.polish.enabled" = "Polish dictation with AI";
+"dictation.polish.balanced.description" = "Fix grammar, remove false starts, and apply spoken corrections while keeping your meaning.";
+"dictation.polish.live" = "Polish while you speak";
+"dictation.polish.live.description" = "Clean up completed phrases in the caption while you keep talking.";
+"dictation.caption.wider" = "Widen caption";
+"dictation.caption.narrower" = "Narrow caption";

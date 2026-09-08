@@ -78,7 +78,7 @@ enum TextFrontierMeasurer {
 
 /// Live caption with an Aqua-inspired **writing frontier**: confirmed transcript
 /// on the left and a theme-colored orb at the insertion point. The container
-/// size is fixed; only the orb slides as `transcript` grows.
+/// size is fixed. Text and its cursor move together in one clipped viewport.
 struct DictationWritingCaptionView: View {
     let transcript: String
     /// Leading words rendered sharp; the tentative tail stays readable at a lighter weight.
@@ -98,16 +98,15 @@ struct DictationWritingCaptionView: View {
     private static let orbDiameter: CGFloat = 9
     private static let orbGap: CGFloat = 5
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var displayedText = ""
+    @State private var displayedStableWordCount = 0
+    @State private var textTransition: ContentTransition = .identity
     @State private var frontier = TextFrontierMetrics()
-    @State private var scrollToken = UUID()
-    @State private var frontierMeasureTask: Task<Void, Never>?
-
-    private var trimmed: String {
-        transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
 
     private var textMaxWidth: CGFloat {
-        max(1, width - horizontalPadding * 2 - leadingContentInset - trailingContentInset)
+        max(1, width - horizontalPadding * 2 - leadingContentInset - trailingContentInset
+            - Self.orbDiameter - Self.orbGap)
     }
 
     private var naturalHeight: CGFloat {
@@ -118,10 +117,6 @@ struct DictationWritingCaptionView: View {
         min(max(naturalHeight, minHeight), maxHeight)
     }
 
-    private var isHeightCapped: Bool {
-        naturalHeight > maxHeight + 0.5
-    }
-
     private var orbCenter: CGPoint {
         CGPoint(
             x: leadingContentInset + horizontalPadding + frontier.caretTrailingX + Self.orbGap + Self.orbDiameter * 0.5,
@@ -130,52 +125,40 @@ struct DictationWritingCaptionView: View {
     }
 
     var body: some View {
-        Group {
-            if isHeightCapped {
-                ScrollViewReader { proxy in
-                    ScrollView(.vertical, showsIndicators: false) {
-                        captionContent
-                            .id("writing-caption-anchor")
-                    }
-                    .defaultScrollAnchor(.bottom)
-                    .onChange(of: transcript) { _, _ in
-                        refreshFrontier()
-                        scrollToken = UUID()
-                    }
-                    .onChange(of: scrollToken) { _, _ in
-                        DispatchQueue.main.async {
-                            proxy.scrollTo("writing-caption-anchor", anchor: .bottom)
-                        }
-                    }
-                }
-            } else {
-                captionContent
-                    .onChange(of: transcript) { _, _ in
-                        refreshFrontier()
-                    }
-            }
-        }
+        captionContent
+        .offset(y: -max(0, naturalHeight - displayHeight))
         .frame(width: width, height: displayHeight, alignment: .topLeading)
         .clipped()
+        .mask {
+            VStack(spacing: 0) {
+                LinearGradient(colors: [naturalHeight > displayHeight ? .clear : .white, .white],
+                               startPoint: .top, endPoint: .bottom)
+                    .frame(height: 8)
+                Color.white
+            }
+        }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(L10n.string("dictation.overlay.transcript", default: "Live transcript"))
         .accessibilityValue(transcript)
-        .onDisappear {
-            frontierMeasureTask?.cancel()
+        .onChange(of: LiveCaptionComposer.State(text: transcript, stableWordCount: stableWordCount), initial: true) { _, _ in
+            updateCaption()
         }
-        .onChange(of: stableWordCount) { _, _ in
-            refreshFrontier()
-        }
-        .onAppear {
-            refreshFrontier()
+        .onChange(of: textMaxWidth) { _, _ in
+            updateCaption()
         }
     }
 
     private var captionContent: some View {
         ZStack(alignment: .topLeading) {
             transcriptLayer
-            frontierGlow
-            orbLayer
+            ZStack(alignment: .topLeading) {
+                frontierGlow
+                orbLayer
+            }
+            // Fade between lines instead of sweeping the cursor diagonally
+            // through words when a line wraps. Same-line movement still glides.
+            .id(frontier.caretCenterY)
+            .transition(.opacity)
         }
         .frame(width: width, alignment: .topLeading)
         .frame(
@@ -186,16 +169,12 @@ struct DictationWritingCaptionView: View {
 
     // MARK: - Layers
 
-    private var transcriptParts: (stable: String, provisional: String) {
-        LiveCaptionComposer.splitStableProvisional(trimmed, stableWordCount: stableWordCount)
-    }
-
-    @ViewBuilder
     private var transcriptLayer: some View {
-        let parts = transcriptParts
-        let captionFont = Font.system(size: fontSize, weight: .medium)
-
-        stableProvisionalText(parts: parts, font: captionFont)
+        Text(Self.styledText(displayedText, stableWordCount: displayedStableWordCount, color: palette.captionText))
+        .font(.system(size: fontSize, weight: .medium))
+        // New speech appears immediately. Corrections crossfade briefly;
+        // fading the entire paragraph on every appended word causes flicker.
+        .contentTransition(textTransition)
         .multilineTextAlignment(.leading)
         .lineLimit(nil)
         .fixedSize(horizontal: false, vertical: true)
@@ -205,26 +184,15 @@ struct DictationWritingCaptionView: View {
         .padding(.vertical, verticalPadding)
     }
 
-    @ViewBuilder
-    private func stableProvisionalText(parts: (stable: String, provisional: String), font: Font) -> some View {
-        if trimmed.isEmpty {
-            Text(" ")
-                .font(font)
-        } else if parts.provisional.isEmpty {
-            Text(parts.stable)
-                .font(font)
-                .foregroundStyle(palette.captionText.opacity(0.9))
-        } else if parts.stable.isEmpty {
-            Text(parts.provisional)
-                .font(font)
-                .foregroundStyle(palette.captionText.opacity(0.72))
-        } else {
-            (Text(parts.stable)
-                .foregroundStyle(palette.captionText.opacity(0.9))
-                + Text(" " + parts.provisional)
-                .foregroundStyle(palette.captionText.opacity(0.72)))
-                .font(font)
-        }
+    static func styledText(_ text: String, stableWordCount: Int, color: Color) -> AttributedString {
+        let boundary = text.split(whereSeparator: \.isWhitespace)
+            .prefix(max(0, stableWordCount)).last?.endIndex ?? text.startIndex
+        // Slice the original text so paragraphs and spacing survive confirmation.
+        var stable = AttributedString(String(text[..<boundary]))
+        stable.foregroundColor = color.opacity(0.9)
+        var provisional = AttributedString(String(text[boundary...]))
+        provisional.foregroundColor = color.opacity(0.72)
+        return stable + provisional
     }
 
     private var frontierGlow: some View {
@@ -245,7 +213,7 @@ struct DictationWritingCaptionView: View {
                 x: leadingContentInset + horizontalPadding + frontier.caretTrailingX + Self.orbGap * 0.35 + 1,
                 y: verticalPadding + frontier.caretCenterY
             )
-            .opacity(trimmed.isEmpty ? 0.35 : 0.75)
+            .opacity(displayedText.isEmpty ? 0.35 : 0.75)
     }
 
     private var orbLayer: some View {
@@ -253,20 +221,20 @@ struct DictationWritingCaptionView: View {
             .position(orbCenter)
     }
 
-    private func refreshFrontier() {
-        frontierMeasureTask?.cancel()
-        let sample = trimmed
-        let width = textMaxWidth
-        let size = fontSize
-        frontierMeasureTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 50_000_000)
-            guard !Task.isCancelled else { return }
-            frontier = TextFrontierMeasurer.measure(
-                text: sample,
-                fontSize: size,
-                maxWidth: width
-            )
-            scrollToken = UUID()
+    private func updateCaption() {
+        let next = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        let metrics = TextFrontierMeasurer.measure(text: next, fontSize: fontSize, maxWidth: textMaxWidth)
+        let transition: ContentTransition = next == displayedText ? .interpolate
+            : next.hasPrefix(displayedText) ? .identity : .opacity
+        let motion: Animation? = reduceMotion || displayedText.isEmpty || next.isEmpty
+            ? nil : .smooth(duration: 0.2)
+        // Publish the text, cursor and vertical follow in the same transaction.
+        // A delayed second measurement makes the cursor lag and scrolling jump.
+        withAnimation(motion) {
+            textTransition = transition
+            displayedText = next
+            displayedStableWordCount = stableWordCount
+            frontier = metrics
         }
     }
 }
@@ -276,6 +244,7 @@ struct DictationWritingCaptionView: View {
 struct DictationCaptionOrb: View {
     let color: Color
     let level: Double
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let diameter: CGFloat = 9
 
@@ -304,5 +273,6 @@ struct DictationCaptionOrb: View {
                 )
         }
         .scaleEffect(1.0 + 0.08 * level)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: level)
     }
 }

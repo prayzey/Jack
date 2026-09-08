@@ -9,9 +9,11 @@ import SwiftUI
 enum DictationCaptionLayout {
     static let shadowMargin: CGFloat = 24
     static let captionWidth: CGFloat = 360
+    static let minimumCaptionWidth: CGFloat = 320
+    static let maximumCaptionWidth: CGFloat = 900
     static let maxHeight: CGFloat = 196
 
-    /// Fixed-shape session card (Handy-style): the box never grows — text
+    /// Fixed-height session card: the box never grows vertically — text
     /// scrolls up inside `textAreaHeight` and the control bar sits below.
     static let textAreaHeight: CGFloat = 76
     static let controlBarHeight: CGFloat = 34
@@ -29,6 +31,12 @@ enum DictationCaptionLayout {
             width: captionWidth + margin,
             height: maxHeight + margin
         )
+    }
+
+    static func clampedCaptionWidth(_ requested: Double, availableWidth: CGFloat = .greatestFiniteMagnitude) -> CGFloat {
+        let width = requested.isFinite ? CGFloat(requested) : captionWidth
+        let ceiling = max(minimumCaptionWidth, min(maximumCaptionWidth, availableWidth - shadowMargin * 2))
+        return min(max(width, minimumCaptionWidth), ceiling)
     }
 
     static func modeGlyphReserve(for mode: DictationMode) -> CGFloat {

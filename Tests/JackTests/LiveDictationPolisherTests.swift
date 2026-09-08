@@ -157,6 +157,34 @@ final class LiveDictationPolisherTests: XCTestCase {
         XCTAssertNil(polisher.finalResult(matching: "i need to buy tomatoes. oops i mean onions."))
     }
 
+    func testFailedPolishIsNotReusedButSuccessfulUnchangedTextIs() async {
+        let raw = "Please send the proposal."
+        let failed = LiveDictationPolisher(prepare: { $0 }, polishChunk: { _ in nil })
+        failed.ingest(committedRaw: raw)
+        await failed.finishSession()
+        XCTAssertNil(failed.finalResult(matching: raw))
+        XCTAssertNil(failed.compose(cumulativeRaw: raw, committedRaw: raw))
+
+        let unchanged = LiveDictationPolisher(prepare: { $0 }, polishChunk: { $0 })
+        unchanged.ingest(committedRaw: raw)
+        await unchanged.finishSession()
+        XCTAssertEqual(unchanged.finalResult(matching: raw), raw)
+    }
+
+    func testFinishingDropsQueuedAndLatePasses() async {
+        var calls = 0
+        let polisher = LiveDictationPolisher(prepare: { $0 }, polishChunk: { input in
+            calls += 1
+            return input
+        })
+        polisher.ingest(committedRaw: "Please send the proposal.")
+        polisher.ingest(committedRaw: "Please send the proposal. Include the final schedule.")
+        await polisher.finishSession()
+        polisher.ingest(committedRaw: "Please send the proposal. Include the final schedule. Thank you very much.")
+        await polisher.finishSession()
+        XCTAssertEqual(calls, 1, "Final speech-recognition chunks must not start a second live pass.")
+    }
+
     func testNewBoundarySupersedesWhilePassRuns() async {
         var polishCount = 0
         let polisher = LiveDictationPolisher(

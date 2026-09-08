@@ -7,9 +7,8 @@ import SwiftUI
 
 /// Lightweight manager for the floating dictation caption window.
 ///
-/// The overlay is a fixed-size `NSPanel` for the whole session (bottom edge
-/// pinned once). The caption **card** grows taller inside the slot — the shell
-/// never resizes or drifts on screen.
+/// The panel keeps its height and bottom edge throughout a session. Only an
+/// explicit resize changes its width; listening and processing share one card.
 @MainActor
 final class DictationOverlayWindowManager {
     static let shared = DictationOverlayWindowManager()
@@ -19,6 +18,7 @@ final class DictationOverlayWindowManager {
     private var hostingView: NSHostingView<DictationOverlayView>?
     private var phaseObservation: AnyCancellable?
     private var themeObservation: AnyCancellable?
+    private var widthObservation: AnyCancellable?
     private var hideTask: Task<Void, Never>?
     private var escapeGlobalMonitor: Any?
     private var escapeLocalMonitor: Any?
@@ -29,6 +29,11 @@ final class DictationOverlayWindowManager {
     func bind(coordinator: DictationCoordinator, store: DictationStore) {
         self.coordinator = coordinator
         self.store = store
+
+        widthObservation?.cancel()
+        widthObservation = store.$settings.map(\.captionWidth).removeDuplicates()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.updatePanelWidth() }
 
         themeObservation?.cancel()
         themeObservation = store.$settings
@@ -94,7 +99,7 @@ final class DictationOverlayWindowManager {
             panel.alphaValue = 0
             panel.orderFrontRegardless()
             NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.22
+                ctx.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.22
                 ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 1, 0.36, 1)
                 panel.animator().alphaValue = 1
             }
@@ -108,7 +113,7 @@ final class DictationOverlayWindowManager {
             if Task.isCancelled { return }
             guard let self, let panel = self.panel, panel.isVisible else { return }
             NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.1
+                ctx.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.12
                 ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
                 panel.animator().alphaValue = 0
             } completionHandler: { [weak panel] in
@@ -141,6 +146,7 @@ final class DictationOverlayWindowManager {
         }
         let hostingView = NSHostingView(rootView: view)
         hostingView.translatesAutoresizingMaskIntoConstraints = true
+        hostingView.autoresizingMask = [.width, .height]
         let initialSize = DictationCaptionLayout.sessionPanelSize
         hostingView.frame = NSRect(origin: .zero, size: initialSize)
 
@@ -176,11 +182,14 @@ final class DictationOverlayWindowManager {
     private func repositionPanel(_ panel: NSPanel) {
         guard let hostingView else { return }
 
-        let panelSize = DictationCaptionLayout.sessionPanelSize
+        guard let screen = screenForCursor() else { return }
+        var panelSize = DictationCaptionLayout.sessionPanelSize
+        panelSize.width = DictationCaptionLayout.clampedCaptionWidth(
+            store?.settings.captionWidth ?? 360, availableWidth: screen.visibleFrame.width
+        ) + DictationCaptionLayout.shadowMargin * 2
         hostingView.setFrameSize(panelSize)
         panel.setContentSize(panelSize)
 
-        guard let screen = screenForCursor() else { return }
         let screenFrame = screen.visibleFrame
         let leftX = screenFrame.midX - panelSize.width / 2
         let bottomEdge = screenFrame.minY + 48
@@ -190,6 +199,20 @@ final class DictationOverlayWindowManager {
             width: panelSize.width,
             height: panelSize.height
         )
+        panel.setFrame(frame, display: true)
+    }
+
+    private func updatePanelWidth() {
+        guard let panel, panel.isVisible else { return }
+        let screen = panel.screen?.visibleFrame
+        let width = DictationCaptionLayout.clampedCaptionWidth(
+            store?.settings.captionWidth ?? 360, availableWidth: screen?.width ?? .greatestFiniteMagnitude
+        ) + DictationCaptionLayout.shadowMargin * 2
+        guard abs(panel.frame.width - width) > 0.5 else { return }
+        var frame = panel.frame
+        frame.origin.x += (frame.width - width) / 2
+        frame.size.width = width
+        if let screen { frame.origin.x = min(max(frame.minX, screen.minX), screen.maxX - width) }
         panel.setFrame(frame, display: true)
     }
 

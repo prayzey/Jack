@@ -162,8 +162,7 @@ enum DictationMode: String, Codable, Equatable {
 
 // MARK: - Dictation style + level
 
-/// Two macro "voices" the post-processor can write in. Ported from Openwhisp's
-/// Style picker. The level enum below controls how aggressive the edit is.
+/// Voice choices for dictation and the meeting editor.
 enum DictationStyle: String, Codable, CaseIterable, Identifiable {
     case conversation
     case developer
@@ -364,7 +363,7 @@ struct DictationSettings: Codable, Equatable {
     var postProcessEnabled: Bool = false
     /// Aqua-style live polish: re-polish completed sentences while the user
     /// is still speaking so the caption visibly heals self-corrections. Only
-    /// meaningful when Polish is on and the level rewrites wording. On by
+    /// meaningful when Polish is on. On by
     /// default — the memory gate in `DictationCoordinator` decides whether
     /// Qwen or the Apple Intelligence model (8 GB Macs) actually runs it.
     var livePolishEnabled: Bool = true
@@ -373,7 +372,9 @@ struct DictationSettings: Codable, Equatable {
     /// polish regardless.
     var livePolishEngine: LivePolishEngine = .automatic
     var style: DictationStyle = .conversation
-    var level: DictationLevel = .soft
+    // Dictation has one balanced cleanup policy. The enum remains for saved
+    // history and the separate meeting editor; legacy settings levels are ignored.
+    var level: DictationLevel { postProcessEnabled ? .medium : .none }
     /// Save each dictation as a clip in history so the user can re-grab it
     /// from the Jack window if a paste fails.
     var saveToClipboardHistory: Bool = true
@@ -386,6 +387,8 @@ struct DictationSettings: Codable, Equatable {
     /// of any app. The user can swap to any preset in `DictationPillTheme`
     /// from the Dictate settings tab.
     var pillTheme: DictationPillTheme = .obsidian
+    /// Remember the width chosen by dragging the caption's side edges.
+    var captionWidth: Double = 360
     /// When true, the system's output volume is lowered while dictation is
     /// active so background music/videos don't compete with the user's voice.
     /// Off by default — many users dictate in silence already and being
@@ -591,9 +594,9 @@ extension DictationSettings {
     // field (like `pillTheme`) doesn't drop a user's saved settings. The auto-
     // synthesized decoder would throw on a missing key and wipe everything.
     enum CodingKeys: String, CodingKey {
-        case isEnabled, shortcut, postProcessEnabled, livePolishEnabled, livePolishEngine, style, level
+        case isEnabled, shortcut, postProcessEnabled, livePolishEnabled, livePolishEngine, style
         case saveToClipboardHistory, saveDictationHistory, autoPasteIntoActiveApp
-        case pillTheme, duckOtherAudio, duckAmount
+        case pillTheme, captionWidth, duckOtherAudio, duckAmount
         case enabledVocabPacks, customVocabulary
         case packTermAdditions, packTermRemovals
         case formatLists, formatParagraphs, formatPunctuationCommands
@@ -616,11 +619,11 @@ extension DictationSettings {
         self.livePolishEnabled = try c.decodeIfPresent(Bool.self, forKey: .livePolishEnabled) ?? true
         self.livePolishEngine = try c.decodeIfPresent(LivePolishEngine.self, forKey: .livePolishEngine) ?? .automatic
         self.style = try c.decodeIfPresent(DictationStyle.self, forKey: .style) ?? .conversation
-        self.level = try c.decodeIfPresent(DictationLevel.self, forKey: .level) ?? .soft
         self.saveToClipboardHistory = try c.decodeIfPresent(Bool.self, forKey: .saveToClipboardHistory) ?? true
         self.saveDictationHistory = try c.decodeIfPresent(Bool.self, forKey: .saveDictationHistory) ?? true
         self.autoPasteIntoActiveApp = try c.decodeIfPresent(Bool.self, forKey: .autoPasteIntoActiveApp) ?? true
         self.pillTheme = try c.decodeIfPresent(DictationPillTheme.self, forKey: .pillTheme) ?? .obsidian
+        self.captionWidth = try c.decodeIfPresent(Double.self, forKey: .captionWidth) ?? 360
         self.duckOtherAudio = try c.decodeIfPresent(Bool.self, forKey: .duckOtherAudio) ?? false
         self.duckAmount = try c.decodeIfPresent(Double.self, forKey: .duckAmount) ?? 0.6
         self.enabledVocabPacks = try c.decodeIfPresent(Set<DictationVocabularyPack>.self, forKey: .enabledVocabPacks) ?? []

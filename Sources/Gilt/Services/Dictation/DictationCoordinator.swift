@@ -458,7 +458,11 @@ final class DictationCoordinator: ObservableObject {
                 liveAccumulated = update.text
                 currentLiveRaw = update.text
                 currentLiveCommitted = update.confirmedText
-                livePolisher?.ingest(committedRaw: update.confirmedText)
+                // The final recognition chunk can arrive after Finish. It must
+                // update the transcript without starting another background pass.
+                if phase == .listening {
+                    livePolisher?.ingest(committedRaw: update.confirmedText)
+                }
                 let state = livePolisher?.compose(
                     cumulativeRaw: update.text, committedRaw: update.confirmedText
                 ) ?? LiveCaptionComposer.State(
@@ -585,21 +589,16 @@ final class DictationCoordinator: ObservableObject {
         // otherwise users who explicitly turned Polish off would still
         // silently hit the LLM (and block paste on a download). Matches the
         // user-facing mental model: "Polish off = pure Parakeet, no Qwen."
-        let needsQwen = settings.postProcessEnabled
-            && (settings.level != .none
-                || settings.formatLists
-                || settings.formatParagraphs)
         let polished: String
-        if needsQwen {
+        if settings.postProcessEnabled {
             phase = .rewriting
             // Drain any in-flight live pass first — the shared model must
             // never see two generate calls at once, and a drained pass may
             // already cover the whole final transcript (reuse below).
             await livePolisher?.finishSession()
             if Task.isCancelled { return }
-            let effectiveLevel = settings.postProcessEnabled ? settings.level : .none
-            if !settings.formatLists, !settings.formatParagraphs,
-               let live = livePolisher?.finalResult(matching: raw) {
+            let effectiveLevel = settings.level
+            if let live = livePolisher?.finalResult(matching: raw) {
                 // The user paused before releasing the key, so live polish
                 // already processed the exact final transcript — paste with
                 // zero extra model latency. ponytail: exact-match reuse only;
@@ -637,9 +636,6 @@ final class DictationCoordinator: ObservableObject {
                 polished = await styleEngine.process(
                     rawTranscript: raw,
                     style: settings.style,
-                    // If the user wants formatting but didn't turn on AI polish,
-                    // we still need a level — `.none` keeps Qwen from rewriting
-                    // wording while still letting it format structure.
                     level: effectiveLevel,
                     formatLists: settings.formatLists,
                     formatParagraphs: settings.formatParagraphs,
@@ -985,11 +981,9 @@ final class DictationCoordinator: ObservableObject {
         currentLiveCommitted = ""
         // Only the polish/compose flows paste the transcript; actions and
         // ask-screen use it as a command/question, so live polish would just
-        // burn the model. Level `.none` means "don't rewrite wording" — the
-        // list/paragraph toggles alone are final-pass work.
+        // burn the model.
         let wantsLivePolish = settings.livePolishEnabled
             && settings.postProcessEnabled
-            && settings.level != .none
             && speechEngine.supportsNativeStreaming
             && (currentMode == .polish || currentMode == .compose)
         switch settings.livePolishEngine {
@@ -1020,36 +1014,43 @@ final class DictationCoordinator: ObservableObject {
         }
         let style = settings.style
         let level = settings.level
-        // List/paragraph blocks are global document structure — they belong
-        // to the final pass over the full transcript, never to a live prefix.
-        let polishChunk: @MainActor (String) async -> String
+        // Live and final passes must use the same formatting policy so a
+        // completed pass can be reused when its input matches the final text.
+        let polishChunk: @MainActor (String) async -> String?
         switch provider {
         case .qwen:
-            polishChunk = { input in
-                await styleEngine.process(
+            polishChunk = { [weak self] input in
+                var failed = false
+                let output = await styleEngine.process(
                     rawTranscript: input,
                     style: style,
                     level: level,
-                    formatLists: false,
-                    formatParagraphs: false,
-                    timeoutSeconds: 2
+                    formatLists: settings.formatLists,
+                    formatParagraphs: settings.formatParagraphs,
+                    screenContextTerms: self?.liveScreenContextTerms ?? [],
+                    onFallback: { failed = true }
                 )
+                return failed ? nil : output
             }
         case .appleIntelligence:
-            polishChunk = { input in
+            polishChunk = { [weak self] input in
                 let prompt = DictationStyleEngine.makePrompt(
                     style: style,
                     level: level,
-                    formatLists: false,
-                    formatParagraphs: false,
-                    screenContextTerms: [],
+                    formatLists: settings.formatLists,
+                    formatParagraphs: settings.formatParagraphs,
+                    screenContextTerms: self?.liveScreenContextTerms ?? [],
                     transcript: input
                 )
-                guard let output = await AppleIntelligencePolisher.polish(prompt: prompt, timeoutSeconds: 2) else {
-                    return input
+                guard let output = await AppleIntelligencePolisher.polish(prompt: prompt) else {
+                    return nil
                 }
-                let cleaned = DictationStyleEngine.cleanOutput(output, original: input)
-                return DictationStyleEngine.validatedOutput(cleaned, original: input)
+                var cleaned = DictationStyleEngine.cleanOutput(output, original: input)
+                if settings.formatLists {
+                    cleaned = DictationStyleEngine.normalizeInlineNumberedList(cleaned)
+                }
+                let checked = DictationStyleEngine.validatedOutput(cleaned, original: input)
+                return checked == input && cleaned != input ? nil : checked
             }
         }
         // Warm Qwen now, while the user is still speaking — otherwise the

@@ -4,6 +4,19 @@ import XCTest
 @MainActor
 final class DictationStyleEngineTests: XCTestCase {
 
+    func testLegacyLevelsUseBalancedCleanupAndKeepVoiceAndOffChoice() throws {
+        for legacyLevel in ["none", "soft", "medium", "high"] {
+            let data = Data("{\"postProcessEnabled\":true,\"style\":\"developer\",\"level\":\"\(legacyLevel)\"}".utf8)
+            var settings = try JSONDecoder().decode(DictationSettings.self, from: data)
+            XCTAssertEqual(settings.level, .medium)
+            XCTAssertEqual(settings.style, .developer)
+            settings.postProcessEnabled = false
+            let restored = try JSONDecoder().decode(DictationSettings.self, from: JSONEncoder().encode(settings))
+            XCTAssertEqual(restored.level, .none)
+            XCTAssertEqual(restored.style, .developer)
+        }
+    }
+
     func testSingleWordDictationBypassesQwenEvenWhenPolishIsEnabled() {
         XCTAssertTrue(
             DictationStyleEngine.shouldBypassModel(
@@ -133,5 +146,20 @@ final class DictationStyleEngineTests: XCTestCase {
         let original = "um so I think we should uh ship the new settings panel on friday"
         let polished = "I think we should ship the new settings panel on Friday."
         XCTAssertEqual(DictationStyleEngine.cleanOutput(polished, original: original), polished)
+    }
+
+    func testNumberFormattingDoesNotDiscardValidCleanupOrAcceptChangedValues() {
+        let original = "Please keep the budget at 50000 dollars."
+        let formatted = "Please keep the budget at $50,000."
+        XCTAssertEqual(DictationStyleEngine.validatedOutput(formatted, original: original), formatted)
+        for changed in ["Keep the budget at $5,000.", "Keep the budget at $500,000.", "Keep the budget at 50,00 dollars."] {
+            XCTAssertEqual(DictationStyleEngine.validatedOutput(changed, original: original), original)
+        }
+        for (source, changed) in [("Keep 1,234 and 1234.", "Keep 1234 and 1234."),
+                                  ("Keep 1234 and 1234.", "Keep 1,234."),
+                                  ("Keep 1.234.", "Keep 1234."),
+                                  ("Keep invoice 001234.", "Keep invoice 1,234.")] {
+            XCTAssertEqual(DictationStyleEngine.validatedOutput(changed, original: source), source)
+        }
     }
 }

@@ -33,9 +33,9 @@ final class LiveDictationPolisher {
     /// to what the final pass would have fed the model for the same raw text.
     private let prepare: @MainActor (String) -> String
     /// The model pass for one prefix — Qwen on machines with headroom, the
-    /// Apple Intelligence system model on 8 GB Macs. Must return its input
-    /// unchanged on failure (both engines already do).
-    private let polishChunk: @MainActor (String) async -> String
+    /// Apple Intelligence system model on 8 GB Macs. Nil means failure;
+    /// unchanged text is a valid success and can still be reused at Finish.
+    private let polishChunk: @MainActor (String) async -> String?
     /// Fired after a pass lands so the coordinator can re-publish the caption.
     var onUpdate: (@MainActor () -> Void)?
 
@@ -47,10 +47,11 @@ final class LiveDictationPolisher {
     private var scheduledRawPrefix = ""
     private var polishTask: Task<Void, Never>?
     private var pendingRawPrefix: String?
+    private var isFinishing = false
 
     init(
         prepare: @escaping @MainActor (String) -> String,
-        polishChunk: @escaping @MainActor (String) async -> String
+        polishChunk: @escaping @MainActor (String) async -> String?
     ) {
         self.prepare = prepare
         self.polishChunk = polishChunk
@@ -59,6 +60,7 @@ final class LiveDictationPolisher {
     // MARK: - Streaming input
 
     func ingest(committedRaw: String) {
+        guard !isFinishing else { return }
         let scheduledWords = LiveCaptionComposer.wordCount(scheduledRawPrefix)
         guard let prefix = Self.polishablePrefix(
             in: Self.normalizeWhitespace(committedRaw),
@@ -93,8 +95,7 @@ final class LiveDictationPolisher {
         guard !input.isEmpty else { return }
         let started = Date()
         MeetingDownloadLog.log("[live-polish] pass start — \(LiveCaptionComposer.wordCount(input)) words")
-        let output = await polishChunk(input)
-        guard !Task.isCancelled else { return }
+        guard let output = await polishChunk(input), !output.isEmpty, !Task.isCancelled else { return }
         let elapsed = String(format: "%.1f", Date().timeIntervalSince(started))
         MeetingDownloadLog.log("[live-polish] pass landed in \(elapsed)s — changed=\(output != input)")
         polishedRawPrefix = rawPrefix
@@ -140,6 +141,7 @@ final class LiveDictationPolisher {
     /// the coordinator's final Qwen pass — the shared `QwenLocalLLM` cannot
     /// serve two `respond` calls at once.
     func finishSession() async {
+        isFinishing = true
         pendingRawPrefix = nil
         if let task = polishTask {
             await task.value
@@ -156,6 +158,7 @@ final class LiveDictationPolisher {
     }
 
     func cancel() {
+        isFinishing = true
         pendingRawPrefix = nil
         polishTask?.cancel()
         polishTask = nil

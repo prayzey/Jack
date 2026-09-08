@@ -28,6 +28,38 @@ final class LivePolishIntegrationManualTests: XCTestCase {
         try await QwenLocalLLM.shared.ensureLoadedFromCache(cacheDirectory: qwenCacheURL)
     }
 
+    func testDictationLatencyAuditWhenRequested() async throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["JACK_DICTATION_LATENCY_AUDIT"] == "1")
+        let engine = DictationStyleEngine(cacheDirectory: qwenCacheURL)
+        let short = "the meeting is on tuesday wait no I meant wednesday"
+        let long = "Please send the updated proposal to Jordan before Friday and keep the budget at 50000 dollars. "
+            + "We need the revised schedule and the final list of requirements so everyone has the latest version. "
+            + "The design review is on Tuesday, wait no I meant Wednesday, and the engineering review follows on Thursday. "
+            + "Make sure the document includes the contact details for the project team and clearly explains what needs to be finished before the next meeting."
+        for (name, input, formatting) in [("short-live", short, false), ("short-final", short, true),
+                                           ("long-live", long, false), ("long-final", long, true)] {
+            var fallback = false
+            let start = Date()
+            let output = await engine.process(rawTranscript: input, style: .conversation, level: .medium,
+                formatLists: formatting, formatParagraphs: formatting, timeoutSeconds: 15,
+                onFallback: { fallback = true })
+            let prompt = DictationStyleEngine.makePrompt(style: .conversation, level: .medium,
+                formatLists: formatting, formatParagraphs: formatting, screenContextTerms: [], transcript: input)
+            print("LATENCY_AUDIT \(name) seconds=\(Date().timeIntervalSince(start)) promptChars=\(prompt.count) fallback=\(fallback) outputChars=\(output.count)")
+            XCTAssertFalse(fallback, "The timing sample must complete cleanup, not measure a raw fallback.")
+            XCTAssertTrue(output.localizedCaseInsensitiveContains("Wednesday"))
+            if name.hasPrefix("short") {
+                XCTAssertTrue(output.localizedCaseInsensitiveContains("meeting"), "Cleanup dropped the subject: \(output)")
+                XCTAssertFalse(output.localizedCaseInsensitiveContains("Tuesday"))
+            } else {
+                for detail in ["Jordan", "Friday", "50000", "Thursday", "contact details"] {
+                    let text = detail == "50000" ? output.replacingOccurrences(of: ",", with: "") : output
+                    XCTAssertTrue(text.localizedCaseInsensitiveContains(detail), "Lost \(detail): \(output)")
+                }
+            }
+        }
+    }
+
     func testMediumLevelHealsSelfCorrection() async throws {
         try XCTSkipUnless(
             QwenLocalLLM.cachedModelExists(in: qwenCacheURL),
@@ -207,6 +239,8 @@ final class LivePolishIntegrationManualTests: XCTestCase {
         XCTAssertFalse(polished.contains("1. "), "over-eager list formatting: \(polished)")
         XCTAssertFalse(polished.contains("\n- "), "over-eager bullets: \(polished)")
         XCTAssertTrue(polished.lowercased().contains("tomatoes"), "content lost: \(polished)")
+        XCTAssertTrue(polished.lowercased().contains("water"), "content lost: \(polished)")
+        XCTAssertFalse(polished.lowercased().contains("watermelon"), "Invented item: \(polished)")
     }
 
     /// Spoken email address → formatted address. SpokenEmailFormatter does
