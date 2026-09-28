@@ -1,6 +1,7 @@
 @preconcurrency import AVFoundation
 import Foundation
 import CryptoKit
+import Darwin
 import OSLog
 
 /// Speech-to-text engine backed by transcribe.cpp's `parakeet-unified-en-0.6b`
@@ -394,6 +395,11 @@ private final class TranscribeHelperSession: @unchecked Sendable {
         process.standardInput = stdinPipe
         process.standardOutput = stdoutPipe
         process.standardError = FileHandle.nullDevice
+        // Cancellation can terminate the helper during a write. Make a broken
+        // stdin pipe throw EPIPE instead of terminating Jack with SIGPIPE.
+        guard fcntl(stdinPipe.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1) != -1 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
         try process.run()
         #endif
     }

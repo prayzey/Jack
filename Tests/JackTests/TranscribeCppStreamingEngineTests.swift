@@ -185,4 +185,71 @@ final class TranscribeCppStreamingEngineTests: XCTestCase {
         }
         XCTAssertEqual(kill(pid, 0), -1, "Cancel must stop the helper even while audio is open")
     }
+
+    func testStreamingAudioWriteAfterHelperClosesInputReportsError() async throws {
+        // XCTest may ignore SIGPIPE, so exercise the real stream in a child
+        // with the signal's normal fatal disposition.
+        if ProcessInfo.processInfo.environment["JACK_TEST_SIGPIPE_CHILD"] != "1" {
+            let child = Process()
+            child.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+            child.arguments = [
+                "xctest", "-XCTest",
+                "JackTests.TranscribeCppStreamingEngineTests/testStreamingAudioWriteAfterHelperClosesInputReportsError",
+                Bundle(for: Self.self).bundlePath
+            ]
+            child.environment = ProcessInfo.processInfo.environment.merging(["JACK_TEST_SIGPIPE_CHILD": "1"]) { _, new in new }
+            try child.run()
+            let deadline = Date().addingTimeInterval(10)
+            while child.isRunning, Date() < deadline {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            if child.isRunning {
+                child.terminate()
+                child.waitUntilExit()
+            }
+            XCTAssertEqual(child.terminationReason, .exit, "Stream write killed the test child with signal \(child.terminationStatus)")
+            XCTAssertEqual(child.terminationStatus, 0, "Stream write regression failed in isolated test child")
+            return
+        }
+        let previousSignalHandler = signal(SIGPIPE, SIG_DFL)
+        defer { _ = signal(SIGPIPE, previousSignalHandler) }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("helper-closed-input-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let helper = root.appendingPathComponent("helper")
+        let readyFile = root.appendingPathComponent("ready")
+        try "#!/bin/sh\nexec 0<&-\necho ready > \"$1\"\nprintf '%s\\n' 'JT>{\"ready\":true}'\nexec /bin/sleep 30\n"
+            .write(to: helper, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: helper.path)
+
+        let engine = TranscribeCppStreamingEngine(modelURL: readyFile, helperURL: helper)
+        let audio = AsyncStream<AVAudioPCMBuffer>.makeStream()
+        let task = Task {
+            for try await _ in engine.transcribeStream(from: audio.stream, meetingStartedAt: Date()) {}
+        }
+        defer { audio.continuation.finish(); task.cancel() }
+        let deadline = Date().addingTimeInterval(2)
+        while !FileManager.default.fileExists(atPath: readyFile.path), Date() < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        guard FileManager.default.fileExists(atPath: readyFile.path) else {
+            return XCTFail("Helper did not close stdin")
+        }
+
+        audio.continuation.yield(try Self.silentBuffer())
+        do {
+            try await task.value
+            XCTFail("Writing audio to a helper with closed stdin must report an error")
+        } catch {
+            XCTAssertFalse(error is CancellationError, "The failed pipe write should surface before cancellation")
+        }
+    }
+
+    nonisolated private static func silentBuffer() throws -> sending AVAudioPCMBuffer {
+        let format = try XCTUnwrap(AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false))
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1600))
+        buffer.frameLength = 1600
+        buffer.floatChannelData?[0].update(repeating: 0, count: 1600)
+        return buffer
+    }
 }
