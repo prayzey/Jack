@@ -16,7 +16,7 @@ cd "$PROJECT_ROOT"
 VERSION="$(tr -d '[:space:]' < VERSION)"
 TAG_NAME="v${VERSION}"
 APP_NAME="${APP_NAME:-Jack}"
-DMG_NAME="${DMG_NAME:-${APP_NAME}.dmg}"
+DMG_NAME="${DMG_NAME:-Gilt.dmg}"  # legacy download name, see publish-r2-release.sh
 RELEASE_BASENAME="${RELEASE_BASENAME:-Gilt}"
 SPARKLE_ACCOUNT="${SPARKLE_ACCOUNT:-prayzey-gilt}"
 APPCAST_URL="${APPCAST_URL:-https://downloads.gilt.novor.dev/appcast.xml}"

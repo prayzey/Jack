@@ -16,7 +16,7 @@ ARTIFACT_KIND="${2:-dmg}"
 APP_NAME="${APP_NAME:-Jack}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-clip-notary}"
 ZIP_NAME="${APP_NAME}.app.zip"
-DMG_NAME="${DMG_NAME:-${APP_NAME}.dmg}"
+DMG_NAME="${DMG_NAME:-Gilt.dmg}"  # legacy download name, see publish-r2-release.sh
 APP_DIR="${APP_NAME}.app"
 
 if [ "$CONFIG" != "release" ]; then

@@ -19,7 +19,9 @@ R2_BUCKET="gilt-downloads"
 R2_ENDPOINT="https://53efd4156db034899e5cf7b54238b7a1.r2.cloudflarestorage.com"
 AWS_PROFILE="r2"
 APP_NAME="${APP_NAME:-Jack}"
-DMG_NAME="${DMG_NAME:-${APP_NAME}.dmg}"
+# Legacy download name kept on purpose: the website button, version.json and every
+# release on R2 use Gilt.dmg, so a Jack.dmg upload would leave the site serving the old build.
+DMG_NAME="${DMG_NAME:-Gilt.dmg}"
 RELEASE_BASENAME="${RELEASE_BASENAME:-Gilt}"
 APPCAST_ONLY=false
 
