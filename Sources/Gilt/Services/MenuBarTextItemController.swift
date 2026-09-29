@@ -49,6 +49,18 @@ final class MenuBarTextItemController: NSObject {
         scheduleActivationRetry(remainingAttempts: 4)
     }
 
+    /// macOS saves a per-slot hidden flag (`NSStatusItem Visible[CC] Item-N`)
+    /// for unnamed status items. The icon (`MenuBarExtra`) and text item
+    /// trade those slots depending on launch timing, so a stale flag makes
+    /// whichever item lands on it start offscreen until toggled. Must run
+    /// before any status item is created.
+    nonisolated static func clearStaleSlotVisibility(in defaults: UserDefaults = .standard) {
+        for key in defaults.dictionaryRepresentation().keys
+        where key.hasPrefix("NSStatusItem Visible") && key.contains(" Item-") {
+            defaults.removeObject(forKey: key)
+        }
+    }
+
     // MARK: - Activation lifecycle
 
     private func applyCurrentState() {
@@ -78,6 +90,11 @@ final class MenuBarTextItemController: NSObject {
         }
 
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        // Unnamed items get shared "Item-N" slot names, so a hidden flag macOS
+        // saved for the icon item could hide this one on relaunch. Our own
+        // name plus an explicit show keeps the Settings toggle authoritative.
+        item.autosaveName = "JackMenuBarText"
+        item.isVisible = true
         guard let button = item.button else {
             NSStatusBar.system.removeStatusItem(item)
             return

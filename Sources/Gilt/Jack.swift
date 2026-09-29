@@ -117,6 +117,7 @@ struct JackApp: App {
         }
 
         Analytics.initialize()
+        MenuBarTextItemController.clearStaleSlotVisibility()
         let store = ClipboardStore()
         AppStoreReferences.shared.statsStore = store.transcriptionStatsStore
         AppStoreReferences.shared.clipboardStore = store

@@ -754,6 +754,23 @@ final class ModelsAndSettingsTests: XCTestCase {
         XCTAssertEqual(decoded.menuBarCustomText, "Focus")
     }
 
+    func testClearStaleSlotVisibilityRemovesOnlyUnnamedSlotFlags() throws {
+        let suite = "JackTests.statusItemVisibility"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(false, forKey: "NSStatusItem VisibleCC Item-1")
+        defaults.set(false, forKey: "NSStatusItem Visible Item-0")
+        defaults.set(false, forKey: "NSStatusItem VisibleCC JackMenuBarText")
+        defaults.set(40, forKey: "NSStatusItem Preferred Position Item-0")
+
+        MenuBarTextItemController.clearStaleSlotVisibility(in: defaults)
+
+        XCTAssertNil(defaults.object(forKey: "NSStatusItem VisibleCC Item-1"))
+        XCTAssertNil(defaults.object(forKey: "NSStatusItem Visible Item-0"))
+        XCTAssertNotNil(defaults.object(forKey: "NSStatusItem VisibleCC JackMenuBarText"))
+        XCTAssertNotNil(defaults.object(forKey: "NSStatusItem Preferred Position Item-0"))
+    }
+
     // MARK: - AppSettings JSON Round-Trip (comprehensive)
 
     func testSettingsFullRoundTrip() throws {
