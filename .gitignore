@@ -25,3 +25,9 @@ sparkle-archives/
 # transcribe.cpp vendor build (only the shim source is tracked)
 Vendor/transcribe.cpp/
 Vendor/jack-transcribe-stream/jack-transcribe-stream
+
+# Private working notes: audits, reports, screenshots, test logs.
+# Never committed; .githooks/pre-commit also blocks them if force-added.
+/notes/
+/artifacts/
+/*-20[0-9][0-9]-[0-9][0-9]-[0-9][0-9].md

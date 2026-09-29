@@ -79,6 +79,10 @@ tail -F /tmp/jack-app.log | grep --line-buffered '\[meeting\]'
 
 Both `--stdout` and `--stderr` must be supplied (`open` only redirects what you ask for) and must point to existing-or-creatable files. Run `osascript -e 'tell application "System Events" to count of windows of process "Jack"'` to confirm the window came up — `1` means healthy, `0` means the tray is hidden (not degraded).
 
+## Private Notes (never committed)
+
+Write audits, reports, review screenshots, and test logs to `notes/` at the repo root. It is git-ignored, and `.githooks/pre-commit` rejects anything under `notes/` or `artifacts/`, or a dated root report like `name-2026-09-07.md`, even if force-added. This repo is public, so these files must never land in a commit.
+
 ## Architecture
 
 **State-driven SwiftUI app with centralized store pattern.**

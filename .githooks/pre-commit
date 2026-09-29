@@ -1,0 +1,10 @@
+#!/bin/sh
+# Blocks private working notes from ever being committed, even with `git add -f`.
+# Enable once per clone: git config core.hooksPath .githooks
+blocked=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '^(notes|artifacts)/|^[^/]*-20[0-9]{2}-[0-9]{2}-[0-9]{2}\.md$')
+if [ -n "$blocked" ]; then
+    echo "Commit blocked: these are private notes and stay out of the public repo:" >&2
+    echo "$blocked" | sed 's/^/  /' >&2
+    echo "Unstage them with: git restore --staged <path>" >&2
+    exit 1
+fi

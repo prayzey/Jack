@@ -80,6 +80,10 @@ tail -F /tmp/jack-app.log | grep --line-buffered '\[meeting\]'
 
 Trade-off: this launch path is the same one that occasionally leaves the app degraded. If the window doesn't appear within a few seconds, fall back to `open Jack.app` and accept that you'll only see `Logger(subsystem: AppBrand.logSubsystem)` output via `log show --predicate 'subsystem == "Jack"' --info`.
 
+## Private Notes (never committed)
+
+Write audits, reports, review screenshots, and test logs to `notes/` at the repo root. It is git-ignored, and `.githooks/pre-commit` rejects anything under `notes/` or `artifacts/`, or a dated root report like `name-2026-09-07.md`, even if force-added. This repo is public, so these files must never land in a commit.
+
 ## Architecture
 
 **State-driven SwiftUI app with centralized store pattern.**

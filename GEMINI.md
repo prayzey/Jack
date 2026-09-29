@@ -43,6 +43,10 @@ For direct-download release work, also use:
 ./scripts/update-sparkle-appcast.sh
 ```
 
+## Private Notes (never committed)
+
+Write audits, reports, review screenshots, and test logs to `notes/` at the repo root. It is git-ignored, and `.githooks/pre-commit` rejects anything under `notes/` or `artifacts/`, or a dated root report like `name-2026-09-07.md`, even if force-added. This repo is public, so these files must never land in a commit.
+
 ## Architecture
 
 **State-driven SwiftUI app with centralized store pattern.**
