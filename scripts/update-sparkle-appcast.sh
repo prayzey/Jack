@@ -61,6 +61,9 @@ fi
     "$ARCHIVES_DIR"
 
 cp "$ARCHIVES_DIR/appcast.xml" appcast.xml
+# generate_appcast points every full DMG it rewrites at this release's folder, but
+# older DMGs live in their own vX.Y.Z folder. Signatures cover file contents, not URLs.
+sed -i '' -E "s#releases/v[0-9.]+/${RELEASE_BASENAME}-([0-9.]+)\.dmg#releases/v\1/${RELEASE_BASENAME}-\1.dmg#g" appcast.xml
 
 # --- Upload any generated delta files to R2 ---
 DELTA_COUNT=0
