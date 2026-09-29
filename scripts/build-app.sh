@@ -64,9 +64,11 @@ if [ -z "${VERSION:-}" ]; then
     fi
 fi
 
-# Build number from git commit count (auto-incrementing)
+# Build number from git commit count (auto-incrementing). The history was squashed
+# for open source on 2026-09-05 after 1.0.4 shipped as build 601, and Sparkle only
+# offers updates with a higher build number, so the count is offset to stay above it.
 if [ -z "${BUILD:-}" ]; then
-    BUILD=$(git rev-list --count HEAD 2>/dev/null || echo "1")
+    BUILD=$(( $(git rev-list --count HEAD 2>/dev/null || echo 0) + 590 ))
 fi
 
 # Short commit hash for identification
