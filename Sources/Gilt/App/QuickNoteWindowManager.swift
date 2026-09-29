@@ -311,6 +311,8 @@ final class QuickNoteWindowManager: NSObject, NSWindowDelegate {
             cornerSize: 36,
             usesDynamicQuickNoteCanvasInset: true,
             usesDynamicTopDragGap: true,
+            topLeadingControlSize: QuickNoteNavigationHitMetrics.clusterSize,
+            topLeadingControlEdgeClearance: QuickNoteNavigationHitMetrics.resizeEdgeClearance,
             onResizeFinished: { [weak store] frame in
                 store?.settings.quickNoteWindowWidth = frame.width
                 store?.settings.quickNoteWindowHeight = frame.height

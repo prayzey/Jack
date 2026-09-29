@@ -14,7 +14,9 @@ final class WindowEdgeResizeChromeTests: XCTestCase {
             topEdgeThickness: 14,
             cornerSize: 36,
             usesDynamicQuickNoteCanvasInset: true,
-            usesDynamicTopDragGap: true
+            usesDynamicTopDragGap: true,
+            topLeadingControlSize: QuickNoteNavigationHitMetrics.clusterSize,
+            topLeadingControlEdgeClearance: QuickNoteNavigationHitMetrics.resizeEdgeClearance
         )
         return chrome
     }
@@ -42,7 +44,7 @@ final class WindowEdgeResizeChromeTests: XCTestCase {
         let inset = canvasInset
 
         XCTAssertEqual(chrome.hitTest(NSPoint(x: inset + 8, y: 210)), chrome)
-        XCTAssertEqual(chrome.hitTest(NSPoint(x: inset + 20, y: 80)), chrome)
+        XCTAssertEqual(chrome.hitTest(NSPoint(x: inset + 8, y: 110)), chrome)
         XCTAssertNil(chrome.hitTest(NSPoint(x: inset + 80, y: 210)))
         XCTAssertEqual(chrome.hitTest(NSPoint(x: 8, y: 210)), chrome)
     }
@@ -78,5 +80,60 @@ final class WindowEdgeResizeChromeTests: XCTestCase {
             chrome.hitTest(NSPoint(x: windowSize.width - inset + 4, y: 210)),
             chrome
         )
+    }
+
+    func testPreviousNoteArrowStaysClearOfResizeStrip() {
+        XCTAssertGreaterThanOrEqual(
+            QuickNoteNavigationHitMetrics.cardLeadingInset,
+            QuickNoteNavigationHitMetrics.resizeEdgeClearance + 12
+        )
+    }
+
+    func testPreviousNoteArrowRegionIsClickThrough() {
+        let chrome = makeChrome()
+        let inset = canvasInset
+        let arrowCenter = NSPoint(
+            x: inset + QuickNoteNavigationHitMetrics.cardLeadingInset + 14,
+            y: inset + QuickNoteNavigationHitMetrics.cardTopInset + 12
+        )
+
+        XCTAssertNil(chrome.hitTest(arrowCenter))
+        XCTAssertNil(
+            chrome.hitTest(
+                NSPoint(
+                    x: inset + QuickNoteNavigationHitMetrics.cardLeadingInset + 4,
+                    y: inset + QuickNoteNavigationHitMetrics.cardTopInset + 6
+                )
+            )
+        )
+    }
+
+    func testTopLeftCardBorderStillResizesAroundArrows() {
+        let chrome = makeChrome()
+        let inset = canvasInset
+        let clearance = QuickNoteNavigationHitMetrics.resizeEdgeClearance
+
+        XCTAssertEqual(chrome.hitTest(NSPoint(x: inset + 4, y: inset + 4)), chrome)
+        XCTAssertEqual(chrome.hitTest(NSPoint(x: inset + 4, y: inset + clearance - 2)), chrome)
+        XCTAssertEqual(chrome.hitTest(NSPoint(x: inset + 4, y: 210)), chrome)
+    }
+
+    func testTopLeadingControlPocketLeavesEdgeClearance() {
+        let card = NSRect(x: 30, y: 30, width: 500, height: 360)
+        let pocket = WindowEdgeResizeChromeGeometry.topLeadingControlPocket(
+            card: card,
+            clusterSize: CGSize(width: 90, height: 46),
+            edgeClearance: 10
+        )
+
+        XCTAssertEqual(pocket.origin.x, 40, accuracy: 0.001)
+        XCTAssertEqual(pocket.origin.y, 40, accuracy: 0.001)
+        XCTAssertEqual(pocket.width, 90, accuracy: 0.001)
+        XCTAssertEqual(pocket.height, 46, accuracy: 0.001)
+        XCTAssertTrue(WindowEdgeResizeChromeGeometry.topLeadingControlPocket(
+            card: card,
+            clusterSize: .zero,
+            edgeClearance: 10
+        ).equalTo(.zero))
     }
 }

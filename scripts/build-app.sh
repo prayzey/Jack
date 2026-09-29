@@ -131,15 +131,19 @@ require_path \
     "$RESOURCE_BUNDLE_DEST" \
     "Missing ${RESOURCE_BUNDLE_NAME} in ${APP_DIR}. SwiftPM resources must be embedded before shipping."
 
-# Copy loose resources needed by the app bundle itself (icon, wallpapers, preview media).
-if [ -d "Sources/$SOURCE_TARGET_DIR/Resources" ]; then
-    cp -R "Sources/$SOURCE_TARGET_DIR/Resources/." "$RESOURCES/"
+# LaunchServices reads CFBundleIconFile from Contents/Resources, not Gilt_Gilt.bundle.
+# Videos, wallpapers, fonts, and Pulse assets already ship in that SwiftPM bundle
+# (AppResourceLocator / Bundle.module). Copying Sources/Gilt/Resources here again
+# used to double the .app by ~176MB.
+ICON_ICNS="Sources/$SOURCE_TARGET_DIR/Resources/AppIcon.icns"
+if [ -f "$ICON_ICNS" ]; then
+    cp "$ICON_ICNS" "$RESOURCES/AppIcon.icns"
 fi
 
 # --- macOS 26 Liquid Glass app icon (Icon Composer) ---
 # AppIcon.icon is a layered Icon Composer bundle. actool compiles it to Assets.car, which
 # macOS 26+ uses (via CFBundleIconName) to render the icon with the Liquid Glass material
-# inside the system squircle. We compile into a temp dir and copy ONLY Assets.car: the loose
+# inside the system squircle. We compile into a temp dir and copy ONLY Assets.car: the
 # AppIcon.icns copied above stays the pre-26 fallback (CFBundleIconFile), where the system
 # does NOT add its own rounded mask and the established flat artwork is already correct.
 # actool also emits its own AppIcon.icns (a flattened glass render) — we deliberately ignore

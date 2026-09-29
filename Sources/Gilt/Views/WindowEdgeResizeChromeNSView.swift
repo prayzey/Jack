@@ -30,6 +30,13 @@ final class WindowEdgeResizeChromeNSView: NSView {
         /// tracks live card width (55%, clamped 200–340pt).
         var topEdgeCenterGap: CGFloat = 0
         var usesDynamicTopDragGap = false
+        /// Interior pocket in the top-leading card corner that stays
+        /// click-through so overlay controls (Quick Note's previous/next
+        /// arrows) can receive clicks. `.zero` keeps the full corner stretch
+        /// zone. The actual card border still has `topLeadingControlEdgeClearance`
+        /// of resize around this pocket.
+        var topLeadingControlSize: CGSize = .zero
+        var topLeadingControlEdgeClearance: CGFloat = 10
         var onResizeFinished: ((NSRect) -> Void)? = nil
     }
 
@@ -62,6 +69,8 @@ final class WindowEdgeResizeChromeNSView: NSView {
         usesDynamicQuickNoteCanvasInset: Bool = false,
         topEdgeCenterGap: CGFloat = 0,
         usesDynamicTopDragGap: Bool = false,
+        topLeadingControlSize: CGSize = .zero,
+        topLeadingControlEdgeClearance: CGFloat = 10,
         onResizeFinished: ((NSRect) -> Void)? = nil
     ) {
         apply(
@@ -75,6 +84,8 @@ final class WindowEdgeResizeChromeNSView: NSView {
                 usesDynamicQuickNoteCanvasInset: usesDynamicQuickNoteCanvasInset,
                 topEdgeCenterGap: topEdgeCenterGap,
                 usesDynamicTopDragGap: usesDynamicTopDragGap,
+                topLeadingControlSize: topLeadingControlSize,
+                topLeadingControlEdgeClearance: topLeadingControlEdgeClearance,
                 onResizeFinished: onResizeFinished
             )
         )
@@ -93,6 +104,14 @@ final class WindowEdgeResizeChromeNSView: NSView {
             return bounds
         }
         return bounds.insetBy(dx: inset, dy: inset)
+    }
+
+    private var topLeadingControlPocket: NSRect {
+        WindowEdgeResizeChromeGeometry.topLeadingControlPocket(
+            card: cardRect,
+            clusterSize: configuration.topLeadingControlSize,
+            edgeClearance: configuration.topLeadingControlEdgeClearance
+        )
     }
 
     private var effectiveTopDragGap: CGFloat {
@@ -185,6 +204,13 @@ final class WindowEdgeResizeChromeNSView: NSView {
             let rect = zone.rect.insetBy(dx: -zone.outset, dy: -zone.outset)
             addCursorRect(rect, cursor: cursor(for: zone.edge))
         }
+
+        // Last cursor rect wins on overlap, so the arrows keep an arrow
+        // cursor even when a fat corner zone still geometrically covers them.
+        let pocket = topLeadingControlPocket
+        if pocket.width > 0, pocket.height > 0 {
+            addCursorRect(pocket, cursor: .arrow)
+        }
     }
 
     override func mouseMoved(with event: NSEvent) {
@@ -265,6 +291,11 @@ final class WindowEdgeResizeChromeNSView: NSView {
     // MARK: - Edge geometry (flipped: origin top-left)
 
     private func edge(at point: NSPoint) -> WindowResizeEdge? {
+        let pocket = topLeadingControlPocket
+        if pocket.width > 0, pocket.contains(point) {
+            return nil
+        }
+
         for zone in resizeZones() {
             let expanded = zone.rect.insetBy(dx: -zone.outset, dy: -zone.outset)
             guard expanded.contains(point) else { continue }
@@ -390,6 +421,24 @@ final class WindowEdgeResizeChromeNSView: NSView {
     }
 }
 
+/// Pure pocket math for the top-leading overlay controls. Extracted so the
+/// click-through rect is unit-testable without spinning up a window.
+enum WindowEdgeResizeChromeGeometry {
+    static func topLeadingControlPocket(
+        card: NSRect,
+        clusterSize: CGSize,
+        edgeClearance: CGFloat
+    ) -> NSRect {
+        guard clusterSize.width > 0, clusterSize.height > 0 else { return .zero }
+        return NSRect(
+            x: card.minX + edgeClearance,
+            y: card.minY + edgeClearance,
+            width: clusterSize.width,
+            height: clusterSize.height
+        )
+    }
+}
+
 /// Pins resize chrome above an `NSHostingView` so edge grabs beat the editor.
 @MainActor
 enum WindowEdgeResizeChromeInstaller {
@@ -404,6 +453,8 @@ enum WindowEdgeResizeChromeInstaller {
         usesDynamicQuickNoteCanvasInset: Bool = false,
         topEdgeCenterGap: CGFloat = 0,
         usesDynamicTopDragGap: Bool = false,
+        topLeadingControlSize: CGSize = .zero,
+        topLeadingControlEdgeClearance: CGFloat = 10,
         onResizeFinished: ((NSRect) -> Void)? = nil
     ) {
         let chrome: WindowEdgeResizeChromeNSView
@@ -427,6 +478,8 @@ enum WindowEdgeResizeChromeInstaller {
             usesDynamicQuickNoteCanvasInset: usesDynamicQuickNoteCanvasInset,
             topEdgeCenterGap: topEdgeCenterGap,
             usesDynamicTopDragGap: usesDynamicTopDragGap,
+            topLeadingControlSize: topLeadingControlSize,
+            topLeadingControlEdgeClearance: topLeadingControlEdgeClearance,
             onResizeFinished: onResizeFinished
         )
         host.window?.invalidateCursorRects(for: chrome)

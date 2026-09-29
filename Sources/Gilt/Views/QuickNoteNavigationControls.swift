@@ -102,9 +102,13 @@ struct QuickNoteNavigationControls: View {
             Image(systemName: systemImage)
                 .font(.system(size: iconSize, weight: .semibold))
                 .frame(width: buttonSize, height: buttonHeight)
-                .contentShape(Rectangle())
+                // Grow the hit box a little past the drawn icon so the left
+                // arrow is easy to click now that the stretch zone no longer
+                // covers it. Visual size stays the same.
+                .contentShape(Rectangle().inset(by: -6))
         }
         .buttonStyle(.plain)
+        .contentShape(Rectangle().inset(by: -6))
         .foregroundStyle(isEnabled ? enabledIconColor : disabledIconColor)
         .opacity(isEnabled ? 1 : 0.72)
         .disabled(!isEnabled)

@@ -1,5 +1,5 @@
 {
-  "originHash" : "0d6ed6b428ab7d8c2316fef2d4d4e2967db10de8e501d4a2d8258f421ead6593",
+  "originHash" : "f70ec7f01555137e44fff3a7be0d10aac8e4b6e46d413f3b4c1174ee05948ea7",
   "pins" : [
     {
       "identity" : "fluidaudio",
@@ -15,7 +15,6 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/obra/LLM.swift.git",
       "state" : {
-        "branch" : "main",
         "revision" : "c2144e1a0e29c280ec6080b7da85e876d51f8509"
       }
     },

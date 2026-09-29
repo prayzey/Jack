@@ -1,5 +1,38 @@
 import SwiftUI
 
+/// Shared layout for the previous/next arrows and the AppKit resize chrome.
+///
+/// The resize overlay sits *above* the SwiftUI hosting view, so extra SwiftUI
+/// padding alone cannot save the left arrow — the top-left stretch zone still
+/// eats the click. These numbers keep a thin grab strip on the card border and
+/// a click-through pocket over the arrows. Change them in one place.
+enum QuickNoteNavigationHitMetrics {
+    static let headerHorizontalPadding: CGFloat = 14
+    static let headerTopPadding: CGFloat = 10
+    /// Extra inset on the overlay, on top of the header padding. Standard
+    /// style used to use 4pt here, which parked the previous-note arrow
+    /// inside the 36pt top-left stretch corner.
+    static let overlayLeadingPadding: CGFloat = 16
+    static let overlayTopPadding: CGFloat = 8
+
+    static var cardLeadingInset: CGFloat {
+        headerHorizontalPadding + overlayLeadingPadding
+    }
+
+    static var cardTopInset: CGFloat {
+        headerTopPadding + overlayTopPadding
+    }
+
+    /// Hit box for the previous/next cluster after the remaining resize
+    /// strip. Sized for the larger standard pill, plus a few points of slop.
+    static let clusterSize = CGSize(width: 90, height: 46)
+
+    /// Outer card-border strip that still stretches the window around the
+    /// arrows. Keep this smaller than `cardLeadingInset` so the left arrow
+    /// never sits on the grab band.
+    static let resizeEdgeClearance: CGFloat = 10
+}
+
 func quickNoteDragHeaderHeight(for style: QuickNoteStyle) -> CGFloat {
     switch style {
     case .cleanCanvas:
@@ -76,14 +109,14 @@ struct QuickNoteDragHeader: View {
                     onNavigate: onNavigate,
                     foregroundColor: foregroundColor
                 )
-                .padding(.top, navigationControlsStyle == .minimal ? 10 : 8)
-                .padding(.leading, navigationControlsStyle == .minimal ? 8 : 4)
+                .padding(.top, QuickNoteNavigationHitMetrics.overlayTopPadding)
+                .padding(.leading, QuickNoteNavigationHitMetrics.overlayLeadingPadding)
                 .opacity(controlsOpacity)
                 .allowsHitTesting(controlsOpacity > 0.05)
                 .animation(.easeOut(duration: 0.18), value: controlsOpacity)
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.top, 10)
+        .padding(.horizontal, QuickNoteNavigationHitMetrics.headerHorizontalPadding)
+        .padding(.top, QuickNoteNavigationHitMetrics.headerTopPadding)
     }
 }
