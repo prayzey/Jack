@@ -871,6 +871,7 @@
 "ui.learned.corrections" = "LEARNED CORRECTIONS";
 "ui.live.polish.engine" = "Live polish engine";
 "ui.local.meeting.models" = "Local meeting models";
+"ui.lower.volume" = "Lower volume";
 "ui.meetings" = "MEETINGS";
 "ui.menu.bar.item" = "Menu Bar Item";
 "ui.menu.bar.text" = "Menu bar text";
@@ -888,6 +889,8 @@
 "ui.nvidia.speech.model" = "NVIDIA speech model";
 "ui.off" = "Off";
 "ui.open.settings" = "Open Settings";
+"ui.pause.media" = "Pause";
+"ui.pause.media.hint" = "Pauses YouTube, Music, Spotify, and similar apps. Zoom and Google Meet keep playing.";
 "ui.permissions" = "Permissions";
 "ui.pick.a.background.image.for.the.editor.popover" = "Pick a background image for the editor popover";
 "ui.pill.color" = "Pill color";
@@ -899,6 +902,9 @@
 "ui.preview" = "PREVIEW";
 "ui.quick.look" = "Quick Look";
 "ui.quick.share" = "Quick Share";
+"ui.quiet.other.apps" = "Quiet other apps while dictating";
+"ui.quiet.other.apps.pause" = "Videos and music pause, then start again when you stop.";
+"ui.quiet.other.apps.volume" = "Volume comes back when you stop.";
 "ui.rename" = "Rename";
 "ui.rename.folder" = "Rename Folder";
 "ui.reset" = "Reset";

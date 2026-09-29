@@ -205,6 +205,19 @@ final class ProductionHardeningTests: XCTestCase {
         XCTAssertTrue(AppAttribution.openSourceCreditsText.contains("The above copyright notice and this permission notice"))
     }
 
+    func testBuildAppDoesNotDuplicateSwiftPMResources() throws {
+        let script = try projectFile("scripts/build-app.sh")
+
+        XCTAssertFalse(
+            script.contains("cp -R \"Sources/$SOURCE_TARGET_DIR/Resources/.\""),
+            "Loose-copying Sources/Gilt/Resources into Contents/Resources duplicates Gilt_Gilt.bundle"
+        )
+        XCTAssertTrue(
+            script.contains("cp \"$ICON_ICNS\" \"$RESOURCES/AppIcon.icns\""),
+            "Finder/Dock still need AppIcon.icns at Contents/Resources"
+        )
+    }
+
     func testDmgBuilderDefaultsToReleaseConfiguration() throws {
         let script = try projectFile("scripts/build-dmg.sh")
 

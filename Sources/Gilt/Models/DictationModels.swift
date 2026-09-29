@@ -319,6 +319,25 @@ enum VoiceActionConnector: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// How Jack quiets other apps while the user is dictating.
+enum BackgroundAudioMode: String, Codable, CaseIterable, Identifiable {
+    /// Fade the system output volume down, then restore it.
+    case lowerVolume
+    /// Pause Now Playing (YouTube, Music, Spotify). Meetings keep going.
+    case pauseMedia
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .lowerVolume:
+            return L10n.string("ui.lower.volume", default: "Lower volume")
+        case .pauseMedia:
+            return L10n.string("ui.pause.media", default: "Pause")
+        }
+    }
+}
+
 // MARK: - Dictation settings + history
 
 /// Which model runs the live (while-you-speak) polish passes.
@@ -398,6 +417,9 @@ struct DictationSettings: Codable, Equatable {
     /// 0.6 (60%) is a good default when the toggle is first enabled —
     /// noticeably quieter without killing the audio entirely.
     var duckAmount: Double = 0.6
+    /// What "quiet other apps" actually does. Existing installs that already
+    /// turned ducking on keep lowering volume until the user picks Pause.
+    var backgroundAudioMode: BackgroundAudioMode = .lowerVolume
     /// Vocabulary packs the user has enabled. Each pack contributes a list
     /// of canonical terms the matcher substitutes back into the transcript
     /// when Parakeet has rendered them as spelled-out letters (e.g. "a p i"
@@ -596,7 +618,7 @@ extension DictationSettings {
     enum CodingKeys: String, CodingKey {
         case isEnabled, shortcut, postProcessEnabled, livePolishEnabled, livePolishEngine, style
         case saveToClipboardHistory, saveDictationHistory, autoPasteIntoActiveApp
-        case pillTheme, captionWidth, duckOtherAudio, duckAmount
+        case pillTheme, captionWidth, duckOtherAudio, duckAmount, backgroundAudioMode
         case enabledVocabPacks, customVocabulary
         case packTermAdditions, packTermRemovals
         case formatLists, formatParagraphs, formatPunctuationCommands
@@ -626,6 +648,7 @@ extension DictationSettings {
         self.captionWidth = try c.decodeIfPresent(Double.self, forKey: .captionWidth) ?? 360
         self.duckOtherAudio = try c.decodeIfPresent(Bool.self, forKey: .duckOtherAudio) ?? false
         self.duckAmount = try c.decodeIfPresent(Double.self, forKey: .duckAmount) ?? 0.6
+        self.backgroundAudioMode = try c.decodeIfPresent(BackgroundAudioMode.self, forKey: .backgroundAudioMode) ?? .lowerVolume
         self.enabledVocabPacks = try c.decodeIfPresent(Set<DictationVocabularyPack>.self, forKey: .enabledVocabPacks) ?? []
         // customVocabulary: accept either the new [CustomVocabularyTerm]
         // shape or the legacy [String] shape so users upgrading from a

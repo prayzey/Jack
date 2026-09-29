@@ -861,6 +861,7 @@
 "ui.learned.corrections" = "LEARNED CORRECTIONS";
 "ui.live.polish.engine" = "Live polish engine";
 "ui.local.meeting.models" = "Local meeting models";
+"ui.lower.volume" = "Lautstärke senken";
 "ui.meetings" = "MEETINGS";
 "ui.menu.bar.item" = "Menu Bar Item";
 "ui.menu.bar.text" = "Menu bar text";
@@ -878,6 +879,8 @@
 "ui.nvidia.speech.model" = "NVIDIA speech model";
 "ui.off" = "Off";
 "ui.open.settings" = "Open Settings";
+"ui.pause.media" = "Pausieren";
+"ui.pause.media.hint" = "Pausiert YouTube, Musik, Spotify und ähnliche Apps. Zoom und Google Meet laufen weiter.";
 "ui.permissions" = "Berechtigungen";
 "ui.pick.a.background.image.for.the.editor.popover" = "Pick a background image for the editor popover";
 "ui.pill.color" = "Pill color";
@@ -889,6 +892,9 @@
 "ui.preview" = "PREVIEW";
 "ui.quick.look" = "Quick Look";
 "ui.quick.share" = "Quick Share";
+"ui.quiet.other.apps" = "Andere Apps während des Diktierens leiser";
+"ui.quiet.other.apps.pause" = "Videos und Musik werden pausiert und danach fortgesetzt.";
+"ui.quiet.other.apps.volume" = "Die Lautstärke kommt zurück, wenn du aufhörst.";
 "ui.rename" = "Umbenennen";
 "ui.rename.folder" = "Rename Folder";
 "ui.reset" = "Zurücksetzen";

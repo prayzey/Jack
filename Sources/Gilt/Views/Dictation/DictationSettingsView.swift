@@ -16,6 +16,7 @@ struct DictationSettingsView: View {
     @Namespace private var actionsTriggerNamespace
     @Namespace private var styleNamespace
     @Namespace private var livePolishEngineNamespace
+    @Namespace private var backgroundAudioModeNamespace
     @State private var remindersAccessGranted = RemindersSyncService.shared.hasAccess
     @Namespace private var subTabNamespace
     @State private var subTab: DictateSubTab = .shortcut
@@ -628,8 +629,16 @@ struct DictationSettingsView: View {
         SettingsSection(L10n.string("ui.background.audio", default: "Background audio")) {
             VStack(alignment: .leading, spacing: 0) {
                 SettingsToggleRow(
-                    title: "Quiet other apps while dictating",
-                    subtitle: "Volume comes back when you stop.",
+                    title: L10n.string("ui.quiet.other.apps", default: "Quiet other apps while dictating"),
+                    subtitle: store.settings.backgroundAudioMode == .pauseMedia
+                        ? L10n.string(
+                            "ui.quiet.other.apps.pause",
+                            default: "Videos and music pause, then start again when you stop."
+                        )
+                        : L10n.string(
+                            "ui.quiet.other.apps.volume",
+                            default: "Volume comes back when you stop."
+                        ),
                     icon: "speaker.wave.2.fill",
                     isOn: Binding(
                         get: { store.settings.duckOtherAudio },
@@ -641,32 +650,53 @@ struct DictationSettingsView: View {
                     SettingsDivider()
 
                     VStack(alignment: .leading, spacing: 12) {
-                        HStack(alignment: .firstTextBaseline) {
-                            Text(L10n.string("ui.how.much.quieter", default: "How much quieter"))
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundStyle(SettingsTheme.textPrimary)
-                            Spacer()
-                            Text("\(Int((store.settings.duckAmount * 100).rounded()))%")
-                                .font(.system(size: 12, weight: .medium, design: .monospaced))
-                                .foregroundStyle(SettingsTheme.textSecondary)
+                        SettingsSegmentedPicker(
+                            options: BackgroundAudioMode.allCases,
+                            selection: store.settings.backgroundAudioMode,
+                            namespace: backgroundAudioModeNamespace,
+                            label: \.displayName
+                        ) { mode in
+                            var next = store.settings
+                            next.backgroundAudioMode = mode
+                            store.settings = next
                         }
 
-                        Slider(
-                            value: Binding(
-                                get: { store.settings.duckAmount },
-                                set: { store.settings.duckAmount = $0 }
-                            ),
-                            in: 0...1
-                        ) {
-                            Text(L10n.string("ui.how.much.quieter", default: "How much quieter"))
-                        } minimumValueLabel: {
-                            Text(L10n.string("ui.off", default: "Off"))
-                                .font(.system(size: 10))
-                                .foregroundStyle(SettingsTheme.textSecondary)
-                        } maximumValueLabel: {
-                            Text(L10n.string("ui.mute", default: "Mute"))
-                                .font(.system(size: 10))
-                                .foregroundStyle(SettingsTheme.textSecondary)
+                        if store.settings.backgroundAudioMode == .lowerVolume {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(L10n.string("ui.how.much.quieter", default: "How much quieter"))
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundStyle(SettingsTheme.textPrimary)
+                                Spacer()
+                                Text("\(Int((store.settings.duckAmount * 100).rounded()))%")
+                                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(SettingsTheme.textSecondary)
+                            }
+
+                            Slider(
+                                value: Binding(
+                                    get: { store.settings.duckAmount },
+                                    set: { store.settings.duckAmount = $0 }
+                                ),
+                                in: 0...1
+                            ) {
+                                Text(L10n.string("ui.how.much.quieter", default: "How much quieter"))
+                            } minimumValueLabel: {
+                                Text(L10n.string("ui.off", default: "Off"))
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(SettingsTheme.textSecondary)
+                            } maximumValueLabel: {
+                                Text(L10n.string("ui.mute", default: "Mute"))
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(SettingsTheme.textSecondary)
+                            }
+                        } else {
+                            Text(L10n.string(
+                                "ui.pause.media.hint",
+                                default: "Pauses YouTube, Music, Spotify, and similar apps. Zoom and Google Meet keep playing."
+                            ))
+                            .font(.system(size: 12))
+                            .foregroundStyle(SettingsTheme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                     .padding(.horizontal, 18)

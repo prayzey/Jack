@@ -78,10 +78,8 @@ struct DictationOverlayView: View {
                 leadingContentInset: modeGlyphReserve
             )
             .overlay(alignment: .topLeading) {
-                if coordinator.liveTranscript.isEmpty, !isProcessingPhase(displayPhase) {
-                    Text(coordinator.isPreparing
-                         ? L10n.string("dictation.overlay.preparing", default: "Starting microphone…")
-                         : L10n.string("dictation.overlay.ready", default: "Speak when you're ready"))
+                if coordinator.isPreparing, coordinator.liveTranscript.isEmpty, !isProcessingPhase(displayPhase) {
+                    Text(L10n.string("dictation.overlay.preparing", default: "Starting microphone…"))
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(palette.captionText.opacity(0.75))
                         .padding(.leading, 28 + modeGlyphReserve)

@@ -85,6 +85,7 @@ final class DictationCoordinator: ObservableObject {
     private let audio: DictationAudioCaptureService
     private let paste = DictationPasteService()
     private let ducker = AudioDucker()
+    private let pauser = NowPlayingPauser()
     private let screenContext = ScreenContextService.shared
     /// Used by `.askScreen` mode to grab the full raw text of the frontmost
     /// window (not just the extracted spelling-hint terms that the polish
@@ -221,14 +222,17 @@ final class DictationCoordinator: ObservableObject {
         touchActivity()
         startIdleWatcherIfNeeded()
 
-        // Fade other audio down (if the user enabled it) right as we enter
-        // the listening phase. We don't await this on the main lifecycle
-        // path — the ducker fades the system volume in the background while
-        // we kick off audio capture.
+        // Quiet other audio (if the user enabled it) as we enter listening.
+        // Not awaited — volume fade / Now Playing pause run beside capture.
         if let settings = store?.settings, settings.duckOtherAudio {
             Task { [weak self] in
                 guard let self, self.sessionID == id, self.phase == .listening else { return }
-                await self.ducker.startDucking(amount: settings.duckAmount)
+                switch settings.backgroundAudioMode {
+                case .lowerVolume:
+                    await self.ducker.startDucking(amount: settings.duckAmount)
+                case .pauseMedia:
+                    await self.pauser.pauseIfPlaying()
+                }
             }
         }
 
@@ -316,10 +320,10 @@ final class DictationCoordinator: ObservableObject {
             self.fail(reason: L10n.string("dictation.error.finalizeTimeout", default: "Finishing the transcript took too long. Copy your draft and try again."))
         }
         audio.stop()
-        // Bring other audio back up as soon as we stop listening — the user
+        // Bring other audio back as soon as we stop listening — the user
         // shouldn't have to wait through transcription + polish + paste to
         // hear their music again.
-        Task { [weak self] in await self?.ducker.stopDucking() }
+        restoreBackgroundAudio()
     }
 
     /// Tear everything down immediately, paste nothing, keep nothing.
@@ -333,7 +337,7 @@ final class DictationCoordinator: ObservableObject {
         screenContextTask = nil
         askScreenCaptureTask?.cancel()
         askScreenCaptureTask = nil
-        Task { [weak self] in await self?.ducker.stopDucking() }
+        restoreBackgroundAudio()
         resetToIdle()
     }
 
@@ -1129,7 +1133,7 @@ final class DictationCoordinator: ObservableObject {
         pendingCaptionFlushTask?.cancel()
         livePolisher?.cancel()
         phase = .failed(reason: reason)
-        Task { [weak self] in await self?.ducker.stopDucking() }
+        restoreBackgroundAudio()
     }
 
     private func resetToIdle() {
@@ -1164,10 +1168,18 @@ final class DictationCoordinator: ObservableObject {
         currentMode = .polish
         phase = .idle
         level = 0
-        // Belt-and-suspenders: if any path got us here without stopDucking
-        // already running (rare error paths, empty-audio early return, etc.),
-        // restore other audio now.
-        Task { [weak self] in await self?.ducker.stopDucking() }
+        // Belt-and-suspenders: if any path got us here without restoring
+        // other audio (rare error paths, empty-audio early return, etc.).
+        restoreBackgroundAudio()
+    }
+
+    /// Undo volume duck and/or Now Playing pause. Both calls are no-ops
+    /// when that path was not used this session.
+    private func restoreBackgroundAudio() {
+        Task { [weak self] in
+            await self?.ducker.stopDucking()
+            await self?.pauser.resumeIfNeeded()
+        }
     }
 
     // MARK: - Idle unload (memory hygiene)
