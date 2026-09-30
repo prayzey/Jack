@@ -38,8 +38,20 @@ final class GlobalHotKeyManager {
     private let eventTap = GlobalHotKeyEventTap()
     private var handlers: [RegisteredHotKey: () -> Void] = [:]
     private(set) var registeredShortcuts: [RegisteredHotKey: GlobalShortcut] = [:]
+    private(set) var pendingShortcuts: [RegisteredHotKey: GlobalShortcut] = [:]
+    private var accessibilityRetryTask: Task<Void, Never>?
+    private let isAccessibilityTrusted: () -> Bool
+    private let registerEventTap: (UInt32, GlobalShortcut) -> Bool
 
-    private init() {}
+    init(
+        isAccessibilityTrusted: @escaping () -> Bool = AccessibilityService.isTrusted,
+        registerEventTap: ((UInt32, GlobalShortcut) -> Bool)? = nil
+    ) {
+        self.isAccessibilityTrusted = isAccessibilityTrusted
+        self.registerEventTap = registerEventTap ?? { [eventTap] role, shortcut in
+            eventTap.register(roleRawValue: role, shortcut: shortcut)
+        }
+    }
 
     @discardableResult
     func registerQuickNoteHotKey(shortcut: GlobalShortcut) -> Bool {
@@ -75,6 +87,8 @@ final class GlobalHotKeyManager {
     }
 
     @discardableResult
+    // True means accepted, including shortcuts waiting for Accessibility.
+    // Only registeredShortcuts contains shortcuts that can currently fire.
     private func register(
         role: RegisteredHotKey,
         shortcut: GlobalShortcut,
@@ -85,7 +99,15 @@ final class GlobalHotKeyManager {
         unregister(role: role)
 
         if shortcut.requiresEventTapFallback {
-            if eventTap.register(roleRawValue: role.rawValue, shortcut: shortcut) {
+            // Missing permission is expected on a fresh install, not a conflict.
+            if !isAccessibilityTrusted() {
+                pendingShortcuts[role] = shortcut
+                handlers[role] = handler
+                startAccessibilityRetryIfNeeded()
+                return true
+            }
+
+            if registerEventTap(role.rawValue, shortcut) {
                 handlers[role] = handler
                 registeredShortcuts[role] = shortcut
                 logDebug("Registered event-tap fallback role=\(role.label) shortcut=\(shortcut.displayString)")
@@ -128,6 +150,31 @@ final class GlobalHotKeyManager {
             logDebug("RegisterEventHotKey failed role=\(role.label) status=\(registerStatus)")
             logPerf("registerHotKey conflict duration=\(elapsedMillis(since: registrationStart))ms status=\(registerStatus)")
             return false
+        }
+    }
+
+    func retryPendingHotKeys() {
+        guard isAccessibilityTrusted() else { return }
+        let pending = pendingShortcuts
+        for (role, shortcut) in pending {
+            guard let handler = handlers[role] else { continue }
+            _ = register(role: role, shortcut: shortcut, handler: handler)
+        }
+    }
+
+    private func startAccessibilityRetryIfNeeded() {
+        guard accessibilityRetryTask == nil else { return }
+        accessibilityRetryTask = Task { [weak self] in
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: .seconds(1))
+                } catch {
+                    return
+                }
+                guard let self else { return }
+                self.retryPendingHotKeys()
+                if self.pendingShortcuts.isEmpty { return }
+            }
         }
     }
 
@@ -179,6 +226,11 @@ final class GlobalHotKeyManager {
     }
 
     func unregister(role: RegisteredHotKey) {
+        pendingShortcuts.removeValue(forKey: role)
+        if pendingShortcuts.isEmpty {
+            accessibilityRetryTask?.cancel()
+            accessibilityRetryTask = nil
+        }
         eventTap.unregister(roleRawValue: role.rawValue)
         if let hotKeyRef = hotKeyRefs[role] {
             UnregisterEventHotKey(hotKeyRef)

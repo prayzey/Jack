@@ -6,7 +6,6 @@ struct OnboardingView: View {
     @EnvironmentObject private var store: ClipboardStore
     @State private var currentStep = 0
     @State private var accessibilityGranted = false
-    @State private var accessibilityPollTask: Task<Void, Never>?
     @State private var introFadeProgress = 0.0
     @State private var welcomePhase = 0
 
@@ -178,8 +177,6 @@ struct OnboardingView: View {
                                 .contentShape(RoundedRectangle(cornerRadius: 10))
                         }
                         .buttonStyle(.plain)
-                        .disabled(currentStep == totalSteps - 1 && !accessibilityGranted)
-                        .opacity(currentStep == totalSteps - 1 && !accessibilityGranted ? 0.55 : 1)
                     }
                 }
                 .padding(.horizontal, layout.horizontalPadding)
@@ -202,9 +199,24 @@ struct OnboardingView: View {
                     introFadeProgress = 1
                 }
             }
-            .onDisappear {
-                accessibilityPollTask?.cancel()
-                accessibilityPollTask = nil
+            .task {
+                // Users can take longer than 20 seconds or leave Permissions
+                // before granting access; watch for the whole onboarding session.
+                while !Task.isCancelled {
+                    refreshAccessibilityState()
+                    do {
+                        try await Task.sleep(for: .seconds(1))
+                    } catch {
+                        return
+                    }
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+                AppWindowManager.shared.setTheaterBlurHidden(true)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                refreshAccessibilityState()
+                AppWindowManager.shared.setTheaterBlurHidden(currentStep == 2)
             }
             .onChange(of: currentStep) { oldStep, newStep in
                 // Hide mode preview when leaving the style step
@@ -212,11 +224,7 @@ struct OnboardingView: View {
                     AppWindowManager.shared.hideOnboardingPreview()
                 }
                 // Remove blur + lower window on permissions step so users can reach System Settings
-                if newStep == 2 {
-                    AppWindowManager.shared.setTheaterBlurHidden(true)
-                } else if oldStep == 2 {
-                    AppWindowManager.shared.setTheaterBlurHidden(false)
-                }
+                AppWindowManager.shared.setTheaterBlurHidden(newStep == 2 || !NSApp.isActive)
             }
         }
     }
@@ -492,25 +500,7 @@ struct OnboardingView: View {
                     granted: accessibilityGranted,
                     accentColor: Color(red: 0.3, green: 0.78, blue: 0.55),
                     action: accessibilityGranted ? nil : {
-                        store.requestAccessibilityPermission()
-                        store.openAccessibilitySettings()
-                        accessibilityPollTask?.cancel()
-                        accessibilityPollTask = Task {
-                            for _ in 0..<40 {
-                                guard !Task.isCancelled else { return }
-                                try? await Task.sleep(for: .milliseconds(500))
-                                let granted = AccessibilityService.isTrusted()
-                                if granted {
-                                    await MainActor.run {
-                                        withAnimation(.spring()) {
-                                            accessibilityGranted = true
-                                        }
-                                        accessibilityPollTask = nil
-                                    }
-                                    break
-                                }
-                            }
-                        }
+                        requestAccessibilityAccess()
                     }
                 )
             }
@@ -567,6 +557,7 @@ struct OnboardingView: View {
                         .padding(.horizontal, 18)
                         .padding(.vertical, 6)
                         .background(accent, in: Capsule())
+                        .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
             }
@@ -1156,14 +1147,26 @@ struct OnboardingView: View {
         }
     }
 
+    private func refreshAccessibilityState() {
+        let granted = AccessibilityService.isTrusted()
+        if accessibilityGranted != granted {
+            withAnimation(.spring()) { accessibilityGranted = granted }
+        }
+    }
+
+    private func requestAccessibilityAccess() {
+        // Lower the window before opening Settings, including from Ready.
+        AppWindowManager.shared.setTheaterBlurHidden(true)
+        store.requestAccessibilityPermission()
+        store.openAccessibilitySettings()
+    }
+
     private func finishOnboarding() {
+        refreshAccessibilityState()
         guard accessibilityGranted else {
-            store.requestAccessibilityPermission()
-            store.openAccessibilitySettings()
+            requestAccessibilityAccess()
             return
         }
-        accessibilityPollTask?.cancel()
-        accessibilityPollTask = nil
 
         if let keyWindow = NSApp.keyWindow {
             keyWindow.makeFirstResponder(nil)

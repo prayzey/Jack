@@ -4,6 +4,78 @@ import XCTest
 @testable import Gilt
 
 final class GlobalShortcutTests: XCTestCase {
+    @MainActor
+    func testQuickNoteWaitsForAccessibilityInsteadOfReportingConflict() {
+        var tapAttempts = 0
+        let manager = GlobalHotKeyManager(
+            isAccessibilityTrusted: { false },
+            registerEventTap: { _, _ in tapAttempts += 1; return false }
+        )
+        defer { manager.unregister() }
+
+        XCTAssertTrue(manager.registerQuickNoteHotKey(shortcut: .quickNoteDefault))
+        XCTAssertNil(manager.registeredShortcuts[.quickNote])
+        XCTAssertEqual(tapAttempts, 0)
+        XCTAssertEqual(manager.pendingShortcuts[.quickNote], .quickNoteDefault)
+    }
+
+    @MainActor
+    func testPendingShortcutsRegisterAfterAccessibilityIsGranted() {
+        var trusted = false
+        var tapAttempts = 0
+        let manager = GlobalHotKeyManager(
+            isAccessibilityTrusted: { trusted },
+            registerEventTap: { _, _ in tapAttempts += 1; return true }
+        )
+        defer { manager.unregister() }
+
+        XCTAssertTrue(manager.registerQuickNoteHotKey(shortcut: .quickNoteDefault))
+        XCTAssertTrue(manager.registerCommandPaletteHotKey(shortcut: .commandPaletteDefault))
+        manager.retryPendingHotKeys()
+        XCTAssertEqual(tapAttempts, 0)
+        XCTAssertEqual(manager.pendingShortcuts.count, 2)
+
+        trusted = true
+        manager.retryPendingHotKeys()
+        XCTAssertEqual(tapAttempts, 2)
+        XCTAssertTrue(manager.pendingShortcuts.isEmpty)
+        XCTAssertEqual(manager.registeredShortcuts[.quickNote], .quickNoteDefault)
+        XCTAssertEqual(manager.registeredShortcuts[.commandPalette], .commandPaletteDefault)
+    }
+
+    @MainActor
+    func testUnregisteredPendingShortcutIsNotRetried() {
+        var trusted = false
+        var tapAttempts = 0
+        let manager = GlobalHotKeyManager(
+            isAccessibilityTrusted: { trusted },
+            registerEventTap: { _, _ in tapAttempts += 1; return true }
+        )
+        defer { manager.unregister() }
+
+        XCTAssertTrue(manager.registerQuickNoteHotKey(shortcut: .quickNoteDefault))
+        manager.unregister(role: .quickNote)
+        trusted = true
+        manager.retryPendingHotKeys()
+
+        XCTAssertEqual(tapAttempts, 0)
+        XCTAssertTrue(manager.pendingShortcuts.isEmpty)
+        XCTAssertTrue(manager.registeredShortcuts.isEmpty)
+    }
+
+    @MainActor
+    func testRegistrationFailureWithPermissionStillReportsUnavailable() {
+        let manager = GlobalHotKeyManager(
+            isAccessibilityTrusted: { true },
+            registerEventTap: { _, _ in false }
+        )
+        defer { manager.unregister() }
+
+        XCTAssertFalse(manager.registerQuickNoteHotKey(shortcut: .quickNoteDefault))
+        XCTAssertTrue(manager.pendingShortcuts.isEmpty)
+        XCTAssertNil(manager.registeredShortcuts[.quickNote])
+    }
+
     func testDefaultShortcutUsesControlV() {
         XCTAssertEqual(GlobalShortcut.default.keyCode, UInt32(kVK_ANSI_V))
         XCTAssertEqual(GlobalShortcut.default.modifiers, UInt32(controlKey))
