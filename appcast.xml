@@ -6,6 +6,27 @@
         <description>Direct-download updates for Jack.</description>
         <language>en</language>
         <item>
+            <title>1.0.6</title>
+            <pubDate>Wed, 30 Sep 2026 13:08:24 -0400</pubDate>
+            <link>https://jack.novor.dev</link>
+            <sparkle:version>607</sparkle:version>
+            <sparkle:shortVersionString>1.0.6</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description><![CDATA[<ul>
+<li>Fixed the Quick Note shortcut warning during first-time setup when Accessibility permission has not been granted.</li>
+<li>Fixed the final onboarding button so it opens the permission settings and lets you reach them.</li>
+<li>Onboarding now recognizes permission changes even when setup takes longer.</li>
+</ul>
+]]></description>
+            <enclosure url="https://downloads.gilt.novor.dev/releases/v1.0.6/Gilt-1.0.6.dmg" length="209330463" type="application/octet-stream" sparkle:edSignature="+opQ+x2tSHD2gbiWMxP+rBiqAaOAL9Sk31ATFwtyifDKCAYNf8GiNhEuwgbeIug3X+kcZuPODfh6aZQELwZ3Dw=="/>
+            <sparkle:deltas>
+                <enclosure url="https://downloads.gilt.novor.dev/releases/v1.0.6/Jack607-603.delta" sparkle:deltaFrom="603" length="1903782" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977808" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="S11eo4jNFUJr08LmxuUq/PRz/pJ/ngk61075VDEz7xhz5xwHJW3tj0srRaVhwPvpFEbcBiH8vnmIqLn1srONAQ=="/>
+                <enclosure url="https://downloads.gilt.novor.dev/releases/v1.0.6/Jack607-601.delta" sparkle:deltaFrom="601" length="8724670" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977808" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="/AQoOQjzVkixMO+sQ621zwmIOxyYoiIdXaVq+aqJkMWeuHyILs67kwIPEOYmJOFAOwfbck1QolCcvfzmCO/uAg=="/>
+                <enclosure url="https://downloads.gilt.novor.dev/releases/v1.0.6/Jack607-590.delta" sparkle:deltaFrom="590" length="8822106" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977808" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="IR3JS8PzuuARrwuJ7sM6xhXZ9gZWA5vaKIOlTgP2l4+8ehnIQycQFPApvTnYGl/IEFiDOvgQzwiryFIxl1AeAw=="/>
+            </sparkle:deltas>
+        </item>
+        <item>
             <title>1.0.5</title>
             <pubDate>Tue, 29 Sep 2026 13:08:54 -0400</pubDate>
             <link>https://gilt.novor.dev</link>
@@ -35,22 +56,6 @@
                 <enclosure url="https://downloads.gilt.novor.dev/releases/v1.0.4/Jack601-590.delta" sparkle:deltaFrom="590" length="2247130" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977808" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="mHBomqeUL53DaiRodzx2+IK5ghUi2Yg9bMGkIBKMKSJF2KOhJjuCsXPAtoeD084ZuZesTbohCxBG+EIanfDwDg=="/>
                 <enclosure url="https://downloads.gilt.novor.dev/releases/v1.0.4/Jack601-273.delta" sparkle:deltaFrom="273" length="60599658" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="980432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="2IdyrF3r1XAr5mHHJ87n6DwY34z6f4+0JfWQxi5+lzXOQDgt3HyARKuSARPYIsQ/CZgpT6OLToCsnHPolrh5Cw=="/>
                 <enclosure url="https://downloads.gilt.novor.dev/releases/v1.0.4/Jack601-259.delta" sparkle:deltaFrom="259" length="62444362" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="980432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="iZJzyiFJbkRr10karK/13AJenFcP7/Ejs1BAxi/pUyK7NKjqQDSIqYeosoq+oeV8b1cBMGyb13ohmRSaehF0Dw=="/>
-            </sparkle:deltas>
-        </item>
-        <item>
-            <title>1.0.3</title>
-            <pubDate>Mon, 27 Jul 2026 21:06:15 -0400</pubDate>
-            <link>https://gilt.novor.dev</link>
-            <sparkle:fullReleaseNotesLink>https://gilt.novor.dev/releases/v1.0.3</sparkle:fullReleaseNotesLink>
-            <sparkle:version>590</sparkle:version>
-            <sparkle:shortVersionString>1.0.3</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://downloads.gilt.novor.dev/releases/v1.0.3/Gilt-1.0.3.dmg" length="388507479" type="application/octet-stream" sparkle:edSignature="lfu+L35qoqKsXtBLUOh9DjXe/umuT9JcASc5e5H1VzA/Va7bfOb2OWh9GPOzb+ZzT5NiNTgz4Y8/hDEAWk1WAg=="/>
-            <sparkle:deltas>
-                <enclosure url="https://downloads.gilt.novor.dev/releases/v1.0.3/Jack590-273.delta" sparkle:deltaFrom="273" length="60573770" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="980432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="3EkhDAGodwou/Z4O52GyI9jzRMUOwgrAdJlJMKKi0gQPTFxNoEgisfcj8iOm/JvRSqIOMJUVIvD1dsctOLOsCg=="/>
-                <enclosure url="https://downloads.gilt.novor.dev/releases/v1.0.3/Jack590-259.delta" sparkle:deltaFrom="259" length="62412874" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="980432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="SGONuBUgsDleP5EtkyRX4kcMVeyrnxcuYwuqcfnkFowSoHh4Ss0cPuTCwCk53tCNPuFwMhr4o53j5WxS7MEhDA=="/>
-                <enclosure url="https://downloads.gilt.novor.dev/releases/v1.0.3/Jack590-244.delta" sparkle:deltaFrom="244" length="62415050" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="980432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="VcDixC+Xks8riOMHIfE2O1uXcoXAsNG2Wzpf5wkySr64FRrjulDNLeU92fhAr1YLUY6fJwsSoR63UutUfHneAw=="/>
             </sparkle:deltas>
         </item>
     </channel>
