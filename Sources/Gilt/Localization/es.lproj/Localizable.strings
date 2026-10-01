@@ -1086,3 +1086,17 @@
 
 "settings.build.location" = "Ubicación de la app";
 "settings.build.development" = "Esta es una compilación local de desarrollo.";
+
+"ui.sound" = "Sonido";
+"ui.sound.active" = "Activas";
+"ui.sound.no.active.apps" = "Ninguna app está usando sonido";
+"ui.sound.other.apps" = "Otras apps";
+"ui.sound.settings" = "Configuración de sonido…";
+"ui.sound.mute" = "Silenciar";
+"ui.sound.unmute" = "Activar sonido";
+"ui.sound.muted" = "Silenciado";
+"ui.sound.no.volume.control" = "El volumen de esta salida se cambia en el propio dispositivo.";
+"ui.sound.permission.body" = "Si el volumen de una app no cambia mientras suena, activa la grabación de audio del sistema para Jack.";
+"ui.sound.permission.open" = "Abrir ajustes de privacidad";
+"ui.sound.controls.in.menu.bar" = "Controles de sonido en la barra de menús";
+"ui.sound.controls.in.menu.bar.subtitle" = "Cambia el volumen de cada app desde la barra de menús";

@@ -118,8 +118,10 @@ require_path \
 cp "$HELPER_SOURCE" "$MACOS/jack-transcribe-stream"
 
 # SwiftPM resource bundles live beside the built binary, and generated
-# `Bundle.module` accessors look for them at the app bundle root.
-RESOURCE_BUNDLE_SOURCE=$(find ".build" -type d -name "$RESOURCE_BUNDLE_NAME" -print -quit 2>/dev/null || true)
+# `Bundle.module` accessors look for them at the app bundle root. Take the one
+# next to $BINARY: searching all of .build can pick a stale copy from another
+# configuration or the old build system's folders.
+RESOURCE_BUNDLE_SOURCE=".build/$CONFIG/$RESOURCE_BUNDLE_NAME"
 if [ -n "$RESOURCE_BUNDLE_SOURCE" ] && [ -d "$RESOURCE_BUNDLE_SOURCE" ]; then
     echo "Embedding ${RESOURCE_BUNDLE_NAME}..."
     rm -rf "$RESOURCE_BUNDLE_DEST"
@@ -272,6 +274,8 @@ cat > "$CONTENTS/Info.plist" << PLIST
     <string>Jack briefly reads the frontmost window when you start a dictation so it can spell on-screen names, code symbols, and jargon correctly. Capture happens entirely on your Mac and is never sent anywhere.</string>
     <key>NSRemindersFullAccessUsageDescription</key>
     <string>Jack adds reminders you create to Apple Reminders so they sync to your iPhone and iPad and alert you even when Jack is closed.</string>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>Jack uses this to change the volume of each app. The audio is played straight back to your speakers and is never recorded or saved.</string>
     <key>NSAppleEventsUsageDescription</key>
     <string>Jack uses this to control Spotify playback when you ask it to with your voice.</string>
     <key>UTExportedTypeDeclarations</key>

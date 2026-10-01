@@ -35,6 +35,8 @@ Resolved in `Package.resolved` and fetched by Swift Package Manager at build tim
 
 The Pulse character animations in `Sources/Gilt/Resources/PulseCharacters/` derive from Lil Agents by Ryan Stephen, MIT License, https://github.com/ryanstephen/lil-agents. The full license text is shown in the app's About panel and in `Sources/Gilt/App/AppAttribution.swift`.
 
+The per-app volume control in `Sources/Gilt/Services/Sound/` follows the approach of Fader by Adnaan (MIT License, https://github.com/sheikadnan/fader) and AudioCap by Guilherme Rambo (BSD 2-Clause License, https://github.com/insidegui/AudioCap): a process tap that mutes the app only while Jack reads it, played back through a private aggregate device with the gain ramped on the audio thread. The code is Jack's own.
+
 ## Bundled fonts
 
 All bundled fonts use the SIL Open Font License 1.1. The license texts live in `Sources/Gilt/Resources/Fonts/Licenses/`.

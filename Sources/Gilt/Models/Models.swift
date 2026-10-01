@@ -2144,6 +2144,9 @@ struct AppSettings: Codable {
         appearance.paperType = .blank
         return appearance
     }()
+    /// Second menu bar item with system volume and per-app volume sliders.
+    /// Only takes effect on macOS 14.2+, where Core Audio process taps exist.
+    var showSoundControlsInMenuBar: Bool = true
     var hideFromDock: Bool = false
     var globalShortcut: GlobalShortcut = .default
     /// 0 keeps the original glide; 1 makes tray open/close immediate.
@@ -2286,6 +2289,7 @@ struct AppSettings: Codable {
         case menuBarPopoverShowMessage
         case menuBarPopoverMessage
         case menuBarPopoverAppearance
+        case showSoundControlsInMenuBar
         case hideFromDock
         case globalShortcut
         case trayAnimationSpeed
@@ -2385,6 +2389,7 @@ struct AppSettings: Codable {
             fallback.paperType = .blank
             menuBarPopoverAppearance = fallback
         }
+        showSoundControlsInMenuBar = try container.decodeIfPresent(Bool.self, forKey: .showSoundControlsInMenuBar) ?? true
         // Older builds stored popover ink only on the appearance blob.
         if menuBarPopoverTextColorHex == nil,
            let legacy = menuBarPopoverAppearance.customTextColorHex,
@@ -2522,6 +2527,7 @@ struct AppSettings: Codable {
         try container.encode(menuBarPopoverShowMessage, forKey: .menuBarPopoverShowMessage)
         try container.encode(menuBarPopoverMessage, forKey: .menuBarPopoverMessage)
         try container.encode(menuBarPopoverAppearance, forKey: .menuBarPopoverAppearance)
+        try container.encode(showSoundControlsInMenuBar, forKey: .showSoundControlsInMenuBar)
         try container.encode(hideFromDock, forKey: .hideFromDock)
         try container.encode(globalShortcut, forKey: .globalShortcut)
         try container.encode(min(max(trayAnimationSpeed, 0), 1), forKey: .trayAnimationSpeed)

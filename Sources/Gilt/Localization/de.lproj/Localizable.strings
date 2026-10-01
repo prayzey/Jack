@@ -1086,3 +1086,17 @@
 
 "settings.build.location" = "App-Speicherort";
 "settings.build.development" = "Dies ist ein lokaler Entwicklungsbuild.";
+
+"ui.sound" = "Ton";
+"ui.sound.active" = "Aktiv";
+"ui.sound.no.active.apps" = "Keine App verwendet gerade Ton";
+"ui.sound.other.apps" = "Andere Apps";
+"ui.sound.settings" = "Toneinstellungen …";
+"ui.sound.mute" = "Stummschalten";
+"ui.sound.unmute" = "Ton einschalten";
+"ui.sound.muted" = "Stumm";
+"ui.sound.no.volume.control" = "Die Lautstärke dieses Ausgabegeräts lässt sich nur am Gerät selbst ändern.";
+"ui.sound.permission.body" = "Wenn sich die Lautstärke einer App beim Abspielen nicht ändert, erlaube Jack die Systemaudioaufnahme.";
+"ui.sound.permission.open" = "Datenschutzeinstellungen öffnen";
+"ui.sound.controls.in.menu.bar" = "Tonsteuerung in der Menüleiste";
+"ui.sound.controls.in.menu.bar.subtitle" = "Lautstärke jeder App in der Menüleiste ändern";

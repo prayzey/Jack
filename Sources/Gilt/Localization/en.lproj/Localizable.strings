@@ -1096,3 +1096,17 @@
 
 "settings.build.location" = "App location";
 "settings.build.development" = "This is a local development build.";
+
+"ui.sound" = "Sound";
+"ui.sound.active" = "Active";
+"ui.sound.no.active.apps" = "No apps are using sound";
+"ui.sound.other.apps" = "Other apps";
+"ui.sound.settings" = "Sound Settings…";
+"ui.sound.mute" = "Mute";
+"ui.sound.unmute" = "Unmute";
+"ui.sound.muted" = "Muted";
+"ui.sound.no.volume.control" = "Change this output's volume on the device itself.";
+"ui.sound.permission.body" = "If an app's volume doesn't change while it plays, turn on System Audio Recording for Jack.";
+"ui.sound.permission.open" = "Open Privacy Settings";
+"ui.sound.controls.in.menu.bar" = "Sound controls in menu bar";
+"ui.sound.controls.in.menu.bar.subtitle" = "Change the volume of each app from the menu bar";
