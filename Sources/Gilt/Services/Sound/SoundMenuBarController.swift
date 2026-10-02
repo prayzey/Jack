@@ -97,6 +97,8 @@ final class SoundMenuBarController: NSObject {
         button.setAccessibilityLabel(L10n.string("ui.sound", default: "Sound"))
         statusItem = item
         updateIcon()
+        // Build the panel now so it has measured itself before the first click.
+        if panel == nil { _ = makePanel() }
     }
 
     private func updateIcon() {
@@ -117,8 +119,9 @@ final class SoundMenuBarController: NSObject {
         isOpen = true
         frontmostAtOpen = NSWorkspace.shared.frontmostApplication
         anchor = iconFrame(near: NSEvent.mouseLocation)
-        // Measure before showing so the panel opens at its final size.
-        if let hostingView { contentHeight = hostingView.fittingSize.height }
+        // Lay out now so app-list changes made while closed report their
+        // height before the panel is placed.
+        hostingView?.layoutSubtreeIfNeeded()
         place(panel, animated: false)
         panel.alphaValue = 0
         panel.orderFrontRegardless()
@@ -156,8 +159,10 @@ final class SoundMenuBarController: NSObject {
             backing: .buffered,
             defer: true
         )
-        panel.level = .popUpMenu
+        // isFloatingPanel resets the level to .floating, so set it first;
+        // .popUpMenu keeps the panel above other floating windows, like a menu.
         panel.isFloatingPanel = true
+        panel.level = .popUpMenu
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.backgroundColor = .clear
@@ -186,6 +191,8 @@ final class SoundMenuBarController: NSObject {
         hostingView.frame = background.bounds
         background.addSubview(hostingView)
         panel.contentView = background
+        // First layout reports the content height through onHeightChange.
+        hostingView.layoutSubtreeIfNeeded()
 
         self.panel = panel
         self.hostingView = hostingView
@@ -206,7 +213,10 @@ final class SoundMenuBarController: NSObject {
         else { return }
         let visible = screen.visibleFrame
         let top = iconFrame.minY - Self.menuBarGap
-        let height = min(contentHeight, top - visible.minY - 8)
+        // SwiftUI only reports height changes, so this is the last known
+        // height; before the very first report, open at a typical size and
+        // let the report animate it into place.
+        let height = min(contentHeight > 0 ? contentHeight : 180, top - visible.minY - 8)
         let x = min(max(iconFrame.minX, visible.minX + 8), visible.maxX - Self.panelWidth - 8)
         let frame = NSRect(x: x, y: top - height, width: Self.panelWidth, height: height)
         if animated {
