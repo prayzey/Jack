@@ -338,6 +338,24 @@ enum BackgroundAudioMode: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// The three choices in Settings for quieting other apps while dictating.
+/// Muffle is stored apart from `BackgroundAudioMode` (see
+/// `DictationSettings.muffleBackgroundAudio`) so older Jack builds sharing
+/// these settings never meet an enum value they can't decode.
+enum DictationBackgroundChoice: String, CaseIterable, Identifiable {
+    case lowerVolume, pauseMedia, muffle
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .lowerVolume: return BackgroundAudioMode.lowerVolume.displayName
+        case .pauseMedia: return BackgroundAudioMode.pauseMedia.displayName
+        case .muffle: return L10n.string("ui.muffle", default: "Muffle")
+        }
+    }
+}
+
 // MARK: - Dictation settings + history
 
 /// Which model runs the live (while-you-speak) polish passes.
@@ -420,6 +438,22 @@ struct DictationSettings: Codable, Equatable {
     /// What "quiet other apps" actually does. Existing installs that already
     /// turned ducking on keep lowering volume until the user picks Pause.
     var backgroundAudioMode: BackgroundAudioMode = .lowerVolume
+    /// Muffle other apps instead of `backgroundAudioMode` (needs Jack's sound
+    /// controls; otherwise Jack lowers the volume).
+    var muffleBackgroundAudio: Bool = false
+    var muffleStyle: SoundMuffle = .nextDoor
+
+    var backgroundChoice: DictationBackgroundChoice {
+        get {
+            if muffleBackgroundAudio { return .muffle }
+            return backgroundAudioMode == .pauseMedia ? .pauseMedia : .lowerVolume
+        }
+        set {
+            muffleBackgroundAudio = newValue == .muffle
+            if newValue == .lowerVolume { backgroundAudioMode = .lowerVolume }
+            if newValue == .pauseMedia { backgroundAudioMode = .pauseMedia }
+        }
+    }
     /// Vocabulary packs the user has enabled. Each pack contributes a list
     /// of canonical terms the matcher substitutes back into the transcript
     /// when Parakeet has rendered them as spelled-out letters (e.g. "a p i"
@@ -619,6 +653,7 @@ extension DictationSettings {
         case isEnabled, shortcut, postProcessEnabled, livePolishEnabled, livePolishEngine, style
         case saveToClipboardHistory, saveDictationHistory, autoPasteIntoActiveApp
         case pillTheme, captionWidth, duckOtherAudio, duckAmount, backgroundAudioMode
+        case muffleBackgroundAudio, muffleStyle
         case enabledVocabPacks, customVocabulary
         case packTermAdditions, packTermRemovals
         case formatLists, formatParagraphs, formatPunctuationCommands
@@ -649,6 +684,9 @@ extension DictationSettings {
         self.duckOtherAudio = try c.decodeIfPresent(Bool.self, forKey: .duckOtherAudio) ?? false
         self.duckAmount = try c.decodeIfPresent(Double.self, forKey: .duckAmount) ?? 0.6
         self.backgroundAudioMode = try c.decodeIfPresent(BackgroundAudioMode.self, forKey: .backgroundAudioMode) ?? .lowerVolume
+        self.muffleBackgroundAudio = try c.decodeIfPresent(Bool.self, forKey: .muffleBackgroundAudio) ?? false
+        // `try?`: a style from a newer build shouldn't wipe the rest.
+        self.muffleStyle = (try? c.decodeIfPresent(SoundMuffle.self, forKey: .muffleStyle)) ?? .nextDoor
         self.enabledVocabPacks = try c.decodeIfPresent(Set<DictationVocabularyPack>.self, forKey: .enabledVocabPacks) ?? []
         // customVocabulary: accept either the new [CustomVocabularyTerm]
         // shape or the legacy [String] shape so users upgrading from a

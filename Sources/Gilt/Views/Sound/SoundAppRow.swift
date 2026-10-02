@@ -134,6 +134,8 @@ struct SoundAppRow: View {
             return (String(format: L10n.string("ui.sound.effect.lowered.for.mic", default: "Lowered while %@ uses the mic"), caller), .call)
         case .loweredForDictation:
             return (L10n.string("ui.sound.effect.lowered.for.dictation", default: "Lowered while you dictate"), .dictation)
+        case .muffledForDictation:
+            return (L10n.string("ui.sound.effect.muffled.for.dictation", default: "Muffled while you dictate"), .dictation)
         case .soloed, .none:
             break
         }

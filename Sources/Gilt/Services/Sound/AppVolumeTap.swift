@@ -83,6 +83,17 @@ final class AppVolumeTap: @unchecked Sendable {
         state.target.pointee = gain
     }
 
+    /// Fades a muffle style in (or out, with nil) over `rampSeconds`.
+    func setMuffle(_ muffle: SoundMuffle?, rampSeconds: Float) {
+        if let muffle, let index = SoundMuffle.allCases.firstIndex(of: muffle) {
+            state.muffleStyle.pointee = Int32(index)
+        }
+        state.muffleRamp.pointee = rampSeconds
+        state.muffleTarget.pointee = muffle == nil ? 0 : 1
+    }
+
+    var isMuffled: Bool { state.muffleTarget.pointee > 0 }
+
     /// Loudest sample (0...1) since the last call, as heard after the gain.
     func takePeak() -> Float {
         let peak = state.peak.pointee
@@ -140,6 +151,7 @@ final class AppVolumeTap: @unchecked Sendable {
         else { throw Failure.unavailable(kAudioDeviceUnsupportedFormatError) }
         let sampleRate: Float64 = aggregateID.read(kAudioDevicePropertyNominalSampleRate) ?? 48_000
         state.sampleRate = Float(sampleRate)
+        if !isListenOnly { state.muffler = MuffleProcessor(sampleRate: Float(sampleRate)) }
 
         // Capture the render state, never self: the block runs on the HAL's
         // real-time thread and Core Audio retains it until DestroyIOProcID.
@@ -202,18 +214,27 @@ final class AppVolumeTap: @unchecked Sendable {
 
 /// State shared with the real-time render thread. Plain aligned 32-bit
 /// loads and stores are atomic on arm64 and x86_64, so no locks: the UI
-/// thread writes `target` and `ramp` and reads `peak`; the render thread
-/// owns `current` and writes `peak` and `sawAudio`.
+/// thread writes `target`, `ramp`, and the muffle settings and reads `peak`;
+/// the render thread owns `current` and `muffleMix` and writes `peak` and
+/// `sawAudio`.
 final class RenderState: @unchecked Sendable {
     let target = UnsafeMutablePointer<Float>.allocate(capacity: 1)
     /// Seconds for a full 0 to 1 sweep.
     let ramp = UnsafeMutablePointer<Float>.allocate(capacity: 1)
     let peak = UnsafeMutablePointer<Float>.allocate(capacity: 1)
     let sawAudio = UnsafeMutablePointer<UInt32>.allocate(capacity: 1)
+    /// Index into `SoundMuffle.allCases`; kept after a fade-out starts so
+    /// the tail still sounds like the same style.
+    let muffleStyle = UnsafeMutablePointer<Int32>.allocate(capacity: 1)
+    /// 1 to muffle, 0 to play clean.
+    let muffleTarget = UnsafeMutablePointer<Float>.allocate(capacity: 1)
+    let muffleRamp = UnsafeMutablePointer<Float>.allocate(capacity: 1)
     private let current = UnsafeMutablePointer<Float>.allocate(capacity: 1)
+    private var muffleMix: Float = 0
     private let isListenOnly: Bool
     /// Set before IO starts.
     var sampleRate: Float = 48_000
+    var muffler: MuffleProcessor?
 
     init(gain: Float, startGain: Float = 1, isListenOnly: Bool) {
         self.isListenOnly = isListenOnly
@@ -222,6 +243,9 @@ final class RenderState: @unchecked Sendable {
         peak.initialize(to: 0)
         current.initialize(to: isListenOnly ? gain : startGain)
         sawAudio.initialize(to: 0)
+        muffleStyle.initialize(to: 0)
+        muffleTarget.initialize(to: 0)
+        muffleRamp.initialize(to: 0.5)
     }
 
     deinit {
@@ -230,6 +254,9 @@ final class RenderState: @unchecked Sendable {
         peak.deallocate()
         sawAudio.deallocate()
         current.deallocate()
+        muffleStyle.deallocate()
+        muffleTarget.deallocate()
+        muffleRamp.deallocate()
     }
 
     /// Copies the tap's stereo stream to the output's first stereo pair.
@@ -274,17 +301,35 @@ final class RenderState: @unchecked Sendable {
         let step = (end - start) / Float(frames)
         current.pointee = end
 
+        // The muffle crossfades from clean to effected the same way.
+        let muffleStart = muffleMix
+        let muffleLimit = Float(frames) / max(sampleRate * muffleRamp.pointee, 1)
+        let muffleEnd = muffleStart + max(-muffleLimit, min(muffleLimit, muffleTarget.pointee - muffleStart))
+        let muffleStep = (muffleEnd - muffleStart) / Float(frames)
+        muffleMix = muffleEnd
+        let muffler = (muffleStart > 0 || muffleEnd > 0) ? self.muffler : nil
+        let style = Int(muffleStyle.pointee)
+
         let rightOffset = channels > 1 ? 1 : 0
         var gain = start
+        var mix = muffleStart
         var loudest: Float = 0
         var heard = false
         for frame in 0..<frames {
             gain += step
+            mix += muffleStep
             let rawL = source[frame * 2]
             let rawR = source[frame * 2 + 1]
             if rawL != 0 || rawR != 0 { heard = true }
-            let l = rawL * gain
-            let r = rawR * gain
+            var l = rawL * gain
+            var r = rawR * gain
+            if let muffler {
+                var wetL = l
+                var wetR = r
+                muffler.process(&wetL, &wetR, styleIndex: style)
+                l += (wetL - l) * mix
+                r += (wetR - r) * mix
+            }
             loudest = max(loudest, abs(l), abs(r))
             if mono {
                 left[frame] = (l + r) * 0.5

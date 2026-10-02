@@ -17,6 +17,8 @@ struct DictationSettingsView: View {
     @Namespace private var styleNamespace
     @Namespace private var livePolishEngineNamespace
     @Namespace private var backgroundAudioModeNamespace
+    @State private var previewingMuffle: SoundMuffle?
+    @State private var muffleUnavailable = false
     @State private var remindersAccessGranted = RemindersSyncService.shared.hasAccess
     @Namespace private var subTabNamespace
     @State private var subTab: DictateSubTab = .shortcut
@@ -630,15 +632,16 @@ struct DictationSettingsView: View {
             VStack(alignment: .leading, spacing: 0) {
                 SettingsToggleRow(
                     title: L10n.string("ui.quiet.other.apps", default: "Quiet other apps while dictating"),
-                    subtitle: store.settings.backgroundAudioMode == .pauseMedia
-                        ? L10n.string(
-                            "ui.quiet.other.apps.pause",
-                            default: "Videos and music pause, then start again when you stop."
-                        )
-                        : L10n.string(
-                            "ui.quiet.other.apps.volume",
-                            default: "Volume comes back when you stop."
-                        ),
+                    subtitle: {
+                        switch store.settings.backgroundChoice {
+                        case .pauseMedia:
+                            return L10n.string("ui.quiet.other.apps.pause", default: "Videos and music pause, then start again when you stop.")
+                        case .muffle:
+                            return L10n.string("ui.quiet.other.apps.muffle", default: "Music sounds like it's somewhere else, then clears up when you stop.")
+                        case .lowerVolume:
+                            return L10n.string("ui.quiet.other.apps.volume", default: "Volume comes back when you stop.")
+                        }
+                    }(),
                     icon: "speaker.wave.2.fill",
                     isOn: Binding(
                         get: { store.settings.duckOtherAudio },
@@ -651,17 +654,19 @@ struct DictationSettingsView: View {
 
                     VStack(alignment: .leading, spacing: 12) {
                         SettingsSegmentedPicker(
-                            options: BackgroundAudioMode.allCases,
-                            selection: store.settings.backgroundAudioMode,
+                            options: DictationBackgroundChoice.allCases,
+                            selection: store.settings.backgroundChoice,
                             namespace: backgroundAudioModeNamespace,
                             label: \.displayName
-                        ) { mode in
+                        ) { choice in
                             var next = store.settings
-                            next.backgroundAudioMode = mode
+                            next.backgroundChoice = choice
                             store.settings = next
                         }
 
-                        if store.settings.backgroundAudioMode == .lowerVolume {
+                        if store.settings.backgroundChoice == .muffle {
+                            muffleStyles
+                        } else if store.settings.backgroundChoice == .lowerVolume {
                             HStack(alignment: .firstTextBaseline) {
                                 Text(L10n.string("ui.how.much.quieter", default: "How much quieter"))
                                     .font(.system(size: 14, weight: .medium))
@@ -703,6 +708,45 @@ struct DictationSettingsView: View {
                     .padding(.vertical, 14)
                 }
             }
+        }
+    }
+
+    private var muffleStyles: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(SoundMuffle.allCases) { style in
+                MuffleStyleRow(
+                    style: style,
+                    isSelected: store.settings.muffleStyle == style,
+                    isPreviewing: previewingMuffle == style,
+                    onSelect: {
+                        var next = store.settings
+                        next.muffleStyle = style
+                        store.settings = next
+                    },
+                    onPreview: { preview(style) }
+                )
+            }
+            if muffleUnavailable {
+                Text(L10n.string(
+                    "ui.muffle.unavailable",
+                    default: "Muffle needs Jack's sound controls. Turn them on in Settings > Menu Bar. Until then, Jack lowers the volume instead."
+                ))
+                .font(.system(size: 12))
+                .foregroundStyle(SettingsTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 4)
+            }
+        }
+    }
+
+    /// Muffles what's playing now for a few seconds in `style`.
+    private func preview(_ style: SoundMuffle) {
+        let started = SoundMenuBarController.shared.mixer.previewMuffle(style)
+        muffleUnavailable = !started
+        guard started else { return }
+        previewingMuffle = style
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
+            if previewingMuffle == style { previewingMuffle = nil }
         }
     }
 

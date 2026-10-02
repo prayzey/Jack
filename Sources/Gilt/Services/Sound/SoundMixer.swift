@@ -149,6 +149,7 @@ final class SoundMixer: ObservableObject {
     private var refreshScheduled = false
     private var probeCheckScheduled = false
     private var pendingDeviceChange: DispatchWorkItem?
+    private var previewEnd: DispatchWorkItem?
     private var isRunning = false
     private var panelVisible = false
     private var callModeLevel: Float?
@@ -375,11 +376,36 @@ final class SoundMixer: ObservableObject {
         return true
     }
 
-    func endDictationDucking() {
-        guard rules.dictationLevel != nil else { return }
-        rules.dictationLevel = nil
+    /// Muffles every app while Jack dictates. Returns false when per-app
+    /// control isn't available, so the caller can lower the whole Mac.
+    func beginDictationMuffle(_ muffle: SoundMuffle) -> Bool {
+        guard isRunning, audioCaptureWorks else { return false }
+        previewEnd?.cancel()
+        rules.dictationMuffle = muffle
         reapplyAllTaps(ramp: 0.5)
         publishApps()
+        return true
+    }
+
+    /// Ends dictation's lowering or muffling with a fade.
+    func endDictationDucking() {
+        guard rules.dictationLevel != nil || rules.dictationMuffle != nil else { return }
+        rules.dictationLevel = nil
+        rules.dictationMuffle = nil
+        reapplyAllTaps(ramp: 0.6)
+        publishApps()
+    }
+
+    /// Muffles whatever is playing for a few seconds, so a style can be
+    /// heard before picking it. Returns false when nothing can be muffled.
+    func previewMuffle(_ muffle: SoundMuffle) -> Bool {
+        guard beginDictationMuffle(muffle) else { return false }
+        let end = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.endDictationDucking() }
+        }
+        previewEnd = end
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5, execute: end)
+        return true
     }
 
     private func updateRules(ramp: Float) {
@@ -709,6 +735,7 @@ final class SoundMixer: ObservableObject {
         let level = levels[appID] ?? SoundAppLevel()
         let device = level.outputDeviceUID.flatMap { uid in outputDevices.first { $0.uid == uid }?.id } ?? outputDevice
         let wantsControl = rules.gain(for: appID, level: level) != 1 || device != outputDevice
+            || rules.dictationMuffle != nil
         guard wantsControl || panelVisible else { return nil }
         let listenOnly = !wantsControl || !audioCaptureWorks
         return TapPlan(objects: objects, device: device, listenOnly: listenOnly, wantsControl: wantsControl && listenOnly)
@@ -722,14 +749,15 @@ final class SoundMixer: ObservableObject {
     /// call any time.
     private func applyTap(for appID: String, ramp: Float) {
         guard #available(macOS 14.2, *) else { return }
+        let existing = taps[appID] as? AppVolumeTap
         guard let plan = plan(for: appID) else {
-            removeTap(for: appID)
+            retireTap(for: appID, existing: existing, ramp: ramp)
             return
         }
         let gain = rules.gain(for: appID, level: levels[appID] ?? SoundAppLevel())
-        let existing = taps[appID] as? AppVolumeTap
         if let existing, tapPlans[appID] == plan {
             existing.setGain(gain, rampSeconds: ramp)
+            existing.setMuffle(rules.dictationMuffle, rampSeconds: ramp)
             return
         }
         // Start a replacement where the old tap left the app, so a rebuild
@@ -746,9 +774,31 @@ final class SoundMixer: ObservableObject {
             Task { @MainActor in self?.tapFailed(tap, for: appID, failure) }
         }
         tap.setGain(gain, rampSeconds: ramp)
+        tap.setMuffle(rules.dictationMuffle, rampSeconds: ramp)
         taps[appID] = tap
         tapPlans[appID] = plan
         if plan.listenOnly, !audioCaptureWorks { scheduleProbeCheck() }
+    }
+
+    /// A tap that's no longer needed first fades back to the app's own sound,
+    /// then goes away; removing it at once would jump straight from lowered
+    /// or muffled to full volume. If it's needed again before then, it stays.
+    @available(macOS 14.2, *)
+    private func retireTap(for appID: String, existing: AppVolumeTap?, ramp: Float) {
+        guard let existing, !existing.isListenOnly, existing.gain != 1 || existing.isMuffled,
+              producingOutput.contains(appID)
+        else {
+            removeTap(for: appID)
+            return
+        }
+        existing.setGain(1, rampSeconds: ramp)
+        existing.setMuffle(nil, rampSeconds: ramp)
+        DispatchQueue.main.asyncAfter(deadline: .now() + Double(ramp) + 0.05) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.taps[appID] === existing, self.plan(for: appID) == nil else { return }
+                self.removeTap(for: appID)
+            }
+        }
     }
 
     private func removeTap(for appID: String) {

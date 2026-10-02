@@ -57,6 +57,17 @@ final class AudioDucker {
         await fade(on: device, from: current, to: target)
     }
 
+    /// Muffles other apps in the chosen style. Without per-app control
+    /// (sound controls off, or no permission) it lowers the volume instead,
+    /// so dictation still gets a quieter background.
+    func startMuffling(_ muffle: SoundMuffle) async {
+        if SoundMenuBarController.shared.mixer.beginDictationMuffle(muffle) {
+            duckingPerApp = true
+            return
+        }
+        await startDucking(amount: 0.6)
+    }
+
     /// Fade back up to whatever level we captured on `startDucking`. No-op
     /// if we haven't ducked anything.
     func stopDucking() async {

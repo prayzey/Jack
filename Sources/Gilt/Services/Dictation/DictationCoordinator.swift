@@ -227,11 +227,13 @@ final class DictationCoordinator: ObservableObject {
         if let settings = store?.settings, settings.duckOtherAudio {
             Task { [weak self] in
                 guard let self, self.sessionID == id, self.phase == .listening else { return }
-                switch settings.backgroundAudioMode {
+                switch settings.backgroundChoice {
                 case .lowerVolume:
                     await self.ducker.startDucking(amount: settings.duckAmount)
                 case .pauseMedia:
                     await self.pauser.pauseIfPlaying()
+                case .muffle:
+                    await self.ducker.startMuffling(settings.muffleStyle)
                 }
             }
         }

@@ -8,6 +8,7 @@ enum SoundAppEffect: Equatable {
     /// Another app has the mic (a call, a dictation app), so this one is lowered.
     case loweredForMic(byAppName: String)
     case loweredForDictation
+    case muffledForDictation
 }
 
 /// The automatic layers on top of each app's own level: solo, call mode,
@@ -20,9 +21,12 @@ struct SoundMixRules: Equatable {
     var callModeLevel: Float?
     /// Volume for every app while Jack dictates; nil when not dictating.
     var dictationLevel: Float?
+    /// How every app is muffled while Jack dictates; nil when it isn't.
+    var dictationMuffle: SoundMuffle?
 
     func effect(for appID: String) -> SoundAppEffect {
         if let soloAppID { return appID == soloAppID ? .soloed : .silencedBySolo }
+        if dictationMuffle != nil { return .muffledForDictation }
         if dictationLevel != nil { return .loweredForDictation }
         if callModeLevel != nil, micApps[appID] == nil,
            let caller = micApps.sorted(by: { $0.key < $1.key }).first {
@@ -34,7 +38,7 @@ struct SoundMixRules: Equatable {
     /// What the tap should play the app at, given its own saved level.
     func gain(for appID: String, level: SoundAppLevel) -> Float {
         switch effect(for: appID) {
-        case .soloed, .none: return level.gain
+        case .soloed, .none, .muffledForDictation: return level.gain
         case .silencedBySolo: return 0
         case .loweredForMic: return level.gain * (callModeLevel ?? 1)
         case .loweredForDictation: return level.gain * (dictationLevel ?? 1)
