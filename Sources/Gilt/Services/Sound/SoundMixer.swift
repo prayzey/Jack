@@ -255,7 +255,9 @@ final class SoundMixer: ObservableObject {
     }
 
     private func checkPermission() {
-        switch AudioCapturePermission.status() {
+        let status = AudioCapturePermission.status()
+        logger.info("System audio recording permission: \(String(describing: status), privacy: .public)")
+        switch status {
         case .authorized:
             audioCaptureWorks = true
             needsAudioCapturePermission = false
