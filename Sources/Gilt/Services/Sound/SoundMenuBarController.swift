@@ -16,7 +16,7 @@ final class SoundMenuBarController: NSObject {
     let mixer = SoundMixer()
     private let logger = Logger(subsystem: AppBrand.logSubsystem, category: "SoundMenuBar")
 
-    private static let panelWidth: CGFloat = 320
+    private static let panelWidth: CGFloat = 340
     /// Space between the menu bar and the panel, like system menu bar panels.
     private static let menuBarGap: CGFloat = 5
 
@@ -34,8 +34,11 @@ final class SoundMenuBarController: NSObject {
     private var frontmostAtOpen: NSRunningApplication?
     /// The icon's frame on the display that was clicked, captured on open.
     private var anchor: NSRect?
+    private var scrollMonitor: Any?
+    private weak var store: ClipboardStore?
 
     func bind(to store: ClipboardStore) {
+        self.store = store
         mixer.bind(to: store)
         store.$settings
             .map(\.showSoundControlsInMenuBar)
@@ -45,6 +48,8 @@ final class SoundMenuBarController: NSObject {
                 MainActor.assumeIsolated {
                     self?.wantsItem = enabled
                     self?.applyState()
+                    // The browser extension connects whenever sound controls are on.
+                    if enabled { BrowserTabBridge.shared.start() } else { BrowserTabBridge.shared.stop() }
                 }
             }
             .store(in: &cancellables)
@@ -52,6 +57,20 @@ final class SoundMenuBarController: NSObject {
         mixer.$masterVolume.combineLatest(mixer.$isMasterMuted)
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in MainActor.assumeIsolated { self?.updateIcon() } }
+            .store(in: &cancellables)
+        // Jack dances while he's on screen and the setting is on; the mixer
+        // only listens to the whole Mac while that's true.
+        store.$settings
+            .map { $0.soundJackDances && $0.jackSettings.isVisible }
+            .removeDuplicates()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] wanted in MainActor.assumeIsolated { self?.mixer.wantsSystemLevel = wanted } }
+            .store(in: &cancellables)
+        mixer.meters.$systemLevel
+            .removeDuplicates()
+            .sink { [weak store] level in
+                MainActor.assumeIsolated { store?.jackPresenceController.setMusicLevel(level) }
+            }
             .store(in: &cancellables)
         // Another app coming forward (System Settings after "Sound
         // Settings…", or ⌘-Tab) closes the panel, like a menu.
@@ -75,6 +94,8 @@ final class SoundMenuBarController: NSObject {
             closePanel("turned off")
             statusItem.map(NSStatusBar.system.removeStatusItem)
             statusItem = nil
+            scrollMonitor.map(NSEvent.removeMonitor)
+            scrollMonitor = nil
             return
         }
         guard statusItem?.button == nil else { return }
@@ -93,10 +114,17 @@ final class SoundMenuBarController: NSObject {
             return
         }
         button.target = self
-        button.action = #selector(togglePanel)
+        button.action = #selector(iconClicked)
         button.setAccessibilityLabel(L10n.string("ui.sound", default: "Sound"))
         statusItem = item
         updateIcon()
+        // Scrolling over the icon changes the volume, like a volume knob.
+        scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            guard let self, let button = self.statusItem?.button, event.window === button.window else { return event }
+            let delta = event.hasPreciseScrollingDeltas ? event.scrollingDeltaY / 300 : event.scrollingDeltaY / 30
+            self.mixer.nudgeMasterVolume(by: event.isDirectionInvertedFromDevice ? -delta : delta)
+            return nil
+        }
         // Build the panel now so it has measured itself before the first click.
         if panel == nil { _ = makePanel() }
     }
@@ -110,7 +138,12 @@ final class SoundMenuBarController: NSObject {
 
     // MARK: - Panel
 
-    @objc private func togglePanel() {
+    /// Click opens the panel; ⌥-click mutes or unmutes the Mac without it.
+    @objc private func iconClicked() {
+        if NSEvent.modifierFlags.contains(.option) {
+            mixer.toggleMasterMute()
+            return
+        }
         if isOpen { closePanel("icon") } else { openPanel() }
     }
 
@@ -132,6 +165,8 @@ final class SoundMenuBarController: NSObject {
         }
         statusItem?.button?.highlight(true)
         installDismissMonitors()
+        mixer.setPanelVisible(true)
+        MediaNowPlaying.shared.startPolling()
     }
 
     private func closePanel(_ reason: String = "") {
@@ -141,6 +176,8 @@ final class SoundMenuBarController: NSObject {
         monitors.forEach(NSEvent.removeMonitor)
         monitors = []
         statusItem?.button?.highlight(false)
+        mixer.setPanelVisible(false)
+        MediaNowPlaying.shared.stopPolling()
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.1
             panel.animator().alphaValue = 0
@@ -181,8 +218,20 @@ final class SoundMenuBarController: NSObject {
 
         let hostingView = NSHostingView(rootView: SoundMenuView(
             mixer: mixer,
+            meters: mixer.meters,
+            nowPlaying: .shared,
+            tabs: .shared,
+            callModeEnabled: Binding(
+                get: { [weak self] in self?.store?.settings.soundCallModeEnabled ?? true },
+                set: { [weak self] in self?.store?.settings.soundCallModeEnabled = $0 }
+            ),
             onHeightChange: { [weak self] height in self?.contentHeightChanged(height) },
-            onDismiss: { [weak self] in self?.closePanel("dismiss") }
+            onDismiss: { [weak self] in self?.closePanel("dismiss") },
+            onOpenSettings: { [weak self] in
+                self?.closePanel("settings")
+                NSApp.activate(ignoringOtherApps: true)
+                SettingsNavigation.openSettings(tabRawValue: SettingsTab.menuBar.rawValue)
+            }
         ))
         // The panel sizes itself from the reported height; letting the
         // hosting view resize the window too would fight that.
@@ -243,7 +292,10 @@ final class SoundMenuBarController: NSObject {
             }
         }
         let local = NSEvent.addLocalMonitorForEvents(matching: clicks) { [weak self] event in
-            if let self, event.window !== self.panel, event.window !== self.statusItem?.button?.window {
+            // The panel's own pop-up menus (output picker, right-click) are
+            // separate windows above it; clicking in them isn't "outside".
+            let inMenu = (event.window?.level.rawValue ?? 0) >= NSWindow.Level.popUpMenu.rawValue
+            if let self, !inMenu, event.window !== self.panel, event.window !== self.statusItem?.button?.window {
                 self.closePanel("click in another Jack window")
             }
             return event

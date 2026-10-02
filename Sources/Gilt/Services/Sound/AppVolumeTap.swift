@@ -1,18 +1,21 @@
+import Accelerate
 import AudioToolbox
 import CoreAudio
 import Foundation
 
-/// Plays one app's audio at a chosen volume.
+/// Plays one app's audio at a chosen volume, on a chosen output, or just
+/// listens to it for a level meter.
 ///
 /// Core Audio taps the app's processes (`CATapDescription`) and, with
 /// `.mutedWhenTapped`, silences the app's own output while the tap is being
-/// read. A private aggregate device built on the current output reads the tap
+/// read. A private aggregate device built on the target output reads the tap
 /// and writes it back out scaled by `gain`. If Jack stops reading (teardown,
 /// crash, quit), the app is audible on its own again.
 ///
-/// Without System Audio Recording permission the tap still "works" but only
-/// delivers silence, which would mute the app. So the first tap of a run is a
-/// probe: `.unmuted`, writing nothing, until a real sample proves capture works.
+/// A listen-only tap is `.unmuted` and writes silence: the app keeps playing
+/// on its own while Jack measures it. That's both the level meter and the
+/// permission probe, because without System Audio Recording permission a tap
+/// still "works" but only delivers silence, which would mute the app.
 ///
 /// All Core Audio setup and teardown runs on this tap's own serial queue:
 /// starting IO can block (the permission prompt, slow devices), and one stuck
@@ -24,13 +27,17 @@ final class AppVolumeTap: @unchecked Sendable {
         case unavailable(OSStatus)
     }
 
-    let isProbe: Bool
+    enum Source {
+        case processes([AudioObjectID])
+        /// Everything the Mac plays except these processes (Jack itself).
+        case everythingExcept([AudioObjectID])
+    }
+
+    let isListenOnly: Bool
     let createdAt = Date()
 
-    var gain: Float {
-        get { state.target.pointee }
-        set { state.target.pointee = newValue }
-    }
+    /// The gain this tap is heading to. Set it with `setGain(_:rampSeconds:)`.
+    var gain: Float { state.target.pointee }
 
     /// True once the tap delivered a non-silent sample, proving that macOS
     /// lets Jack capture audio.
@@ -43,18 +50,22 @@ final class AppVolumeTap: @unchecked Sendable {
     private var aggregateID = AudioObjectID(kAudioObjectUnknown)
     private var ioProcID: AudioDeviceIOProcID?
 
+    /// - Parameter startGain: the gain the app is audibly at right now (1 for
+    ///   an app that wasn't tapped), so a new tap fades to `gain` instead of
+    ///   jumping there.
     init(
-        processObjects: [AudioObjectID],
+        source: Source,
         outputDevice: AudioObjectID,
         gain: Float,
-        probe: Bool,
+        startGain: Float = 1,
+        listenOnly: Bool,
         onFailure: @escaping @Sendable (AppVolumeTap, Failure) -> Void
     ) {
-        isProbe = probe
-        state = RenderState(gain: gain, isProbe: probe)
+        isListenOnly = listenOnly
+        state = RenderState(gain: gain, startGain: startGain, isListenOnly: listenOnly)
         queue.async { [self] in
             do {
-                try build(processObjects: processObjects, outputDevice: outputDevice)
+                try build(source: source, outputDevice: outputDevice)
             } catch {
                 // Roll back so an app is never left muted with nothing playing it.
                 teardown()
@@ -65,16 +76,36 @@ final class AppVolumeTap: @unchecked Sendable {
 
     deinit { teardown() }
 
+    /// Moves toward `gain` over `rampSeconds`: about 30 ms for a slider drag
+    /// (fast, but no click), longer for automatic ducking so it fades.
+    func setGain(_ gain: Float, rampSeconds: Float = 0.03) {
+        state.ramp.pointee = rampSeconds
+        state.target.pointee = gain
+    }
+
+    /// Loudest sample (0...1) since the last call, as heard after the gain.
+    func takePeak() -> Float {
+        let peak = state.peak.pointee
+        state.peak.pointee = 0
+        return peak
+    }
+
     /// Destroys the tap, which hands the app its normal output back.
     func invalidate() {
         queue.async { [self] in teardown() }
     }
 
-    private func build(processObjects: [AudioObjectID], outputDevice: AudioObjectID) throws {
-        let description = CATapDescription(stereoMixdownOfProcesses: processObjects)
+    private func build(source: Source, outputDevice: AudioObjectID) throws {
+        let description: CATapDescription
+        switch source {
+        case .processes(let objects):
+            description = CATapDescription(stereoMixdownOfProcesses: objects)
+        case .everythingExcept(let objects):
+            description = CATapDescription(stereoGlobalTapButExcludeProcesses: objects)
+        }
         description.uuid = UUID()
         description.isPrivate = true
-        description.muteBehavior = isProbe ? .unmuted : .mutedWhenTapped
+        description.muteBehavior = isListenOnly ? .unmuted : .mutedWhenTapped
         let tapStatus = AudioHardwareCreateProcessTap(description, &tapID)
         // 'nope' is how Core Audio refuses a tap when capture isn't allowed.
         if tapStatus == kAudioHardwareIllegalOperationError { throw Failure.permissionDenied }
@@ -108,7 +139,7 @@ final class AppVolumeTap: @unchecked Sendable {
               format.mFormatFlags & kAudioFormatFlagIsFloat != 0, format.mBitsPerChannel == 32
         else { throw Failure.unavailable(kAudioDeviceUnsupportedFormatError) }
         let sampleRate: Float64 = aggregateID.read(kAudioDevicePropertyNominalSampleRate) ?? 48_000
-        state.setSampleRate(sampleRate)
+        state.sampleRate = Float(sampleRate)
 
         // Capture the render state, never self: the block runs on the HAL's
         // real-time thread and Core Audio retains it until DestroyIOProcID.
@@ -171,32 +202,34 @@ final class AppVolumeTap: @unchecked Sendable {
 
 /// State shared with the real-time render thread. Plain aligned 32-bit
 /// loads and stores are atomic on arm64 and x86_64, so no locks: the UI
-/// thread writes `target`, the render thread reads it and owns `current`.
+/// thread writes `target` and `ramp` and reads `peak`; the render thread
+/// owns `current` and writes `peak` and `sawAudio`.
 final class RenderState: @unchecked Sendable {
     let target = UnsafeMutablePointer<Float>.allocate(capacity: 1)
+    /// Seconds for a full 0 to 1 sweep.
+    let ramp = UnsafeMutablePointer<Float>.allocate(capacity: 1)
+    let peak = UnsafeMutablePointer<Float>.allocate(capacity: 1)
     let sawAudio = UnsafeMutablePointer<UInt32>.allocate(capacity: 1)
     private let current = UnsafeMutablePointer<Float>.allocate(capacity: 1)
-    private let isProbe: Bool
-    /// Largest gain change per frame: a full 0 to 1 sweep takes 30 ms, so
-    /// dragging a slider doesn't click. Set before IO starts.
-    private var maxStepPerFrame: Float = 1 / 1_440
+    private let isListenOnly: Bool
+    /// Set before IO starts.
+    var sampleRate: Float = 48_000
 
-    init(gain: Float, isProbe: Bool) {
-        self.isProbe = isProbe
+    init(gain: Float, startGain: Float = 1, isListenOnly: Bool) {
+        self.isListenOnly = isListenOnly
         target.initialize(to: gain)
-        // Start at the target so the first buffer doesn't ramp down from full.
-        current.initialize(to: gain)
+        ramp.initialize(to: 0.03)
+        peak.initialize(to: 0)
+        current.initialize(to: isListenOnly ? gain : startGain)
         sawAudio.initialize(to: 0)
     }
 
     deinit {
         target.deallocate()
+        ramp.deallocate()
+        peak.deallocate()
         sawAudio.deallocate()
         current.deallocate()
-    }
-
-    func setSampleRate(_ sampleRate: Double) {
-        maxStepPerFrame = 1 / max(Float(sampleRate) * 0.03, 1)
     }
 
     /// Copies the tap's stereo stream to the output's first stereo pair.
@@ -209,18 +242,23 @@ final class RenderState: @unchecked Sendable {
             if let data = buffer.mData { memset(data, 0, Int(buffer.mDataByteSize)) }
         }
         guard let tap = inputs.last, tap.mNumberChannels == 2,
-              let source = tap.mData?.assumingMemoryBound(to: Float.self),
-              let first = outputs.first,
-              let left = first.mData?.assumingMemoryBound(to: Float.self)
+              let source = tap.mData?.assumingMemoryBound(to: Float.self)
         else { return }
         let tapFrames = Int(tap.mDataByteSize) / (2 * MemoryLayout<Float>.size)
+        guard tapFrames > 0 else { return }
 
-        if sawAudio.pointee == 0, (0..<tapFrames * 2).contains(where: { source[$0] != 0 }) {
-            sawAudio.pointee = 1
+        if isListenOnly {
+            // The app plays on its own; just measure it.
+            var loudest: Float = 0
+            vDSP_maxmgv(source, 1, &loudest, vDSP_Length(tapFrames * 2))
+            if loudest > 0 { sawAudio.pointee = 1 }
+            if loudest > peak.pointee { peak.pointee = loudest }
+            return
         }
-        // A probe leaves the app playing on its own and adds nothing.
-        if isProbe { return }
 
+        guard let first = outputs.first,
+              let left = first.mData?.assumingMemoryBound(to: Float.self)
+        else { return }
         let nonInterleaved = first.mNumberChannels == 1 && outputs.count > 1
         let mono = first.mNumberChannels == 1 && !nonInterleaved
         let channels = Int(first.mNumberChannels)
@@ -231,17 +269,23 @@ final class RenderState: @unchecked Sendable {
         guard frames > 0 else { return }
 
         let start = current.pointee
-        let limit = maxStepPerFrame * Float(frames)
+        let limit = Float(frames) / max(sampleRate * ramp.pointee, 1)
         let end = start + max(-limit, min(limit, target.pointee - start))
         let step = (end - start) / Float(frames)
         current.pointee = end
 
         let rightOffset = channels > 1 ? 1 : 0
         var gain = start
+        var loudest: Float = 0
+        var heard = false
         for frame in 0..<frames {
             gain += step
-            let l = source[frame * 2] * gain
-            let r = source[frame * 2 + 1] * gain
+            let rawL = source[frame * 2]
+            let rawR = source[frame * 2 + 1]
+            if rawL != 0 || rawR != 0 { heard = true }
+            let l = rawL * gain
+            let r = rawR * gain
+            loudest = max(loudest, abs(l), abs(r))
             if mono {
                 left[frame] = (l + r) * 0.5
             } else {
@@ -249,5 +293,7 @@ final class RenderState: @unchecked Sendable {
                 right[frame * channels + rightOffset] = r
             }
         }
+        if heard { sawAudio.pointee = 1 }
+        if loudest > peak.pointee { peak.pointee = loudest }
     }
 }

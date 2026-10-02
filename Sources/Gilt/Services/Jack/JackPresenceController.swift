@@ -106,6 +106,11 @@ final class JackPresenceController {
         }
     }
 
+    /// Feeds the dance: loudness of what the Mac is playing (0...1).
+    func setMusicLevel(_ level: Float) {
+        performer?.musicLevel = level
+    }
+
     /// Pure decision: given the previous and new presence modes (plus whether
     /// the look changed and whether a performer already exists), what should
     /// `apply` do? Kept side-effect-free so it can be exhaustively unit-tested.

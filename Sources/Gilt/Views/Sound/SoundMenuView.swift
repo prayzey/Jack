@@ -1,13 +1,22 @@
 import AppKit
 import SwiftUI
 
-/// Panel behind the speaker icon in the menu bar: system volume on top, then
-/// a volume slider for every app that has opened audio, playing apps first.
+/// Panel behind the speaker icon in the menu bar: the Mac's volume and
+/// output, saved scenes, every app that's making sound (with its live level),
+/// browser tabs, and the automatic sound features.
 struct SoundMenuView: View {
     @ObservedObject var mixer: SoundMixer
+    /// Not observed here: each row's slider observes it, so 24 meter
+    /// updates a second don't redraw the whole panel.
+    let meters: SoundMeters
+    @ObservedObject var nowPlaying: MediaNowPlaying
+    @ObservedObject var tabs: BrowserTabBridge
+    @Binding var callModeEnabled: Bool
     /// The panel window sizes itself from this, so it grows downward.
     var onHeightChange: (CGFloat) -> Void = { _ in }
     var onDismiss: () -> Void = {}
+    var onOpenSettings: () -> Void = {}
+
     @State private var showsOtherApps = false
 
     /// "Other apps" scrolls past this many rows so the panel stays on screen.
@@ -15,114 +24,230 @@ struct SoundMenuView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            masterSection
+            header
+            SoundScenesBar(
+                scenes: mixer.scenes,
+                currentID: mixer.currentSceneID,
+                onApply: mixer.applyScene,
+                onSave: mixer.saveScene(named:),
+                onDelete: mixer.deleteScene
+            )
+            .padding(.horizontal, 8)
+            .padding(.top, 12)
 
-            Divider().padding(.vertical, 10)
+            divider
 
-            if mixer.needsAudioCapturePermission {
-                permissionNote
-            }
+            if mixer.needsAudioCapturePermission { permissionNote }
 
-            sectionLabel(L10n.string("ui.sound.active", default: "Active"))
+            sectionHeader(L10n.string("ui.sound.active", default: "Active"))
             if mixer.activeApps.isEmpty {
-                Text(L10n.string("ui.sound.no.active.apps", default: "No apps are using sound"))
+                Text(L10n.string("ui.sound.no.active.apps", default: "No apps are making sound"))
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
-                    .padding(.vertical, 4)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
             } else {
-                ForEach(mixer.activeApps) { row(for: $0) }
-            }
-
-            if !mixer.quietApps.isEmpty {
-                otherAppsHeader
-                if showsOtherApps {
-                    if mixer.quietApps.count > Self.maxOtherAppRows {
-                        ScrollView {
-                            VStack(spacing: 0) { ForEach(mixer.quietApps) { row(for: $0) } }
-                        }
-                        // Keeps an always-visible scroll bar off the mute buttons.
-                        .contentMargins(.trailing, 10, for: .scrollContent)
-                        .frame(height: CGFloat(Self.maxOtherAppRows) * SoundAppRow.height)
-                    } else {
-                        ForEach(mixer.quietApps) { row(for: $0) }
-                    }
+                ForEach(mixer.activeApps) { app in
+                    row(for: app, compact: false)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
 
-            Divider().padding(.vertical, 8)
+            if !tabs.tabs.isEmpty { tabsSection }
 
-            Button(L10n.string("ui.sound.settings", default: "Sound Settings…")) {
-                if let url = URL(string: "x-apple.systempreferences:com.apple.Sound-Settings.extension") {
-                    NSWorkspace.shared.open(url)
-                }
-                onDismiss()
-            }
-            .buttonStyle(.plain)
-            .font(.system(size: 12.5))
+            if !mixer.quietApps.isEmpty { otherAppsSection }
+
+            divider
+
+            footer
         }
-        .padding(14)
-        .frame(width: 320)
+        .padding(10)
+        .frame(width: 340)
         .fixedSize(horizontal: false, vertical: true)
+        .animation(.snappy(duration: 0.22), value: mixer.activeApps.map(\.id))
+        .animation(.snappy(duration: 0.22), value: tabs.tabs.map(\.id))
         .onGeometryChange(for: CGFloat.self, of: \.size.height, action: onHeightChange)
         // Pinned to the top so content animates downward while the panel resizes.
         .frame(maxHeight: .infinity, alignment: .top)
     }
 
-    private var masterSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
+    // MARK: - Header
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            HStack(spacing: 6) {
                 Text(L10n.string("ui.sound", default: "Sound"))
                     .font(.system(size: 13, weight: .semibold))
-                Text(mixer.outputDeviceName)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                Spacer(minLength: 6)
-                if let volume = mixer.masterVolume {
-                    Text("\(Int((volume * 100).rounded()))%")
-                        .font(.system(size: 11).monospacedDigit())
-                        .foregroundStyle(.secondary)
-                }
+                Spacer(minLength: 8)
+                outputPicker
+                Button(action: onOpenSettings) { Image(systemName: "gearshape") }
+                    .buttonStyle(SoundIconButtonStyle())
+                    .help(L10n.string("ui.sound.jack.settings", default: "Jack's sound settings"))
+                    .accessibilityLabel(L10n.string("ui.sound.jack.settings", default: "Jack's sound settings"))
             }
-
             if let volume = mixer.masterVolume {
-                HStack(spacing: 8) {
-                    Button(action: mixer.toggleMasterMute) {
-                        Image(systemName: mixer.isMasterMuted ? "speaker.slash.fill" : "speaker.fill")
-                            .font(.system(size: 12))
-                            .frame(width: 18, height: 18)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(mixer.isMasterMuted
-                                        ? L10n.string("ui.sound.unmute", default: "Unmute")
-                                        : L10n.string("ui.sound.mute", default: "Mute"))
-
-                    Slider(value: Binding(get: { volume }, set: mixer.setMasterVolume), in: 0...1)
-
-                    Image(systemName: "speaker.wave.3.fill")
-                        .font(.system(size: 12))
+                HStack(spacing: 10) {
+                    SoundSlider(
+                        value: mixer.isMasterMuted ? 0 : volume,
+                        style: .master,
+                        symbol: mixer.menuBarSymbol,
+                        label: L10n.string("ui.sound", default: "Sound"),
+                        onChange: mixer.setMasterVolume
+                    )
+                    Text(mixer.isMasterMuted ? L10n.string("ui.sound.muted", default: "Muted") : "\(Int((volume * 100).rounded()))%")
+                        .font(.system(size: 11, weight: .medium).monospacedDigit())
                         .foregroundStyle(.secondary)
+                        .frame(width: 38, alignment: .trailing)
                 }
             } else {
-                Text(L10n.string(
-                    "ui.sound.no.volume.control",
-                    default: "Change this output's volume on the device itself."
-                ))
-                .font(.system(size: 11.5))
-                .foregroundStyle(.secondary)
+                Text(L10n.string("ui.sound.no.volume.control", default: "Change this output's volume on the device itself."))
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.top, 4)
+    }
+
+    private var outputPicker: some View {
+        let current = mixer.outputDevices.first { $0.uid == mixer.outputDeviceUID }
+        return Menu {
+            SoundOutputMenu(devices: mixer.outputDevices, selectedUID: mixer.outputDeviceUID) { uid in
+                if let uid { mixer.setSystemOutput(uid) }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: current?.symbolName ?? "hifispeaker")
+                    .font(.system(size: 10.5, weight: .semibold))
+                Text(mixer.outputDeviceName)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .lineLimit(1)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+            }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 9)
+            .frame(height: 24)
+            .background(Capsule().fill(Color.primary.opacity(0.07)))
+            .contentShape(Capsule())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help(L10n.string("ui.sound.output.help", default: "Choose where your Mac plays sound"))
+    }
+
+    // MARK: - Sections
+
+    private var divider: some View {
+        Rectangle()
+            .fill(Color.primary.opacity(0.09))
+            .frame(height: 1)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 10)
+    }
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 8)
+            .padding(.bottom, 3)
+    }
+
+    private var tabsSection: some View {
+        let browsers = Set(tabs.tabs.map(\.browserName))
+        let title = browsers.count == 1
+            ? String(format: L10n.string("ui.sound.tabs.in", default: "Tabs in %@"), browsers.first ?? "")
+            : L10n.string("ui.sound.browser.tabs", default: "Browser tabs")
+        return VStack(alignment: .leading, spacing: 0) {
+            sectionHeader(title).padding(.top, 10)
+            ForEach(tabs.tabs) { tab in
+                SoundTabRow(
+                    tab: tab,
+                    onVolume: { tabs.setVolume($0, for: tab.id) },
+                    onToggleMute: { tabs.setMuted(!tab.isMuted, for: tab.id) }
+                )
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
     }
 
+    private var otherAppsSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.snappy(duration: 0.22)) { showsOtherApps.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Text(L10n.string("ui.sound.other.apps", default: "Other apps"))
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("\(mixer.quietApps.count)")
+                        .font(.system(size: 10.5, weight: .medium).monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9.5, weight: .bold))
+                        .rotationEffect(.degrees(showsOtherApps ? 90 : 0))
+                }
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 8)
+                .frame(height: 26)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 8)
+
+            if showsOtherApps {
+                let rows = VStack(spacing: 0) {
+                    ForEach(mixer.quietApps) { row(for: $0, compact: true) }
+                }
+                if mixer.quietApps.count > Self.maxOtherAppRows {
+                    ScrollView { rows }
+                        // Keeps an always-visible scroll bar off the mute buttons.
+                        .contentMargins(.trailing, 10, for: .scrollContent)
+                        .frame(height: CGFloat(Self.maxOtherAppRows) * SoundAppRow.compactHeight)
+                } else {
+                    rows
+                }
+            }
+        }
+    }
+
+    private func row(for app: SoundApp, compact: Bool) -> some View {
+        let isMedia = MediaNowPlaying.supportedBundleIDs.contains(app.id)
+        return SoundAppRow(
+            app: app,
+            track: nowPlaying.tracks[app.id],
+            meters: compact ? nil : meters,
+            compact: compact,
+            isSoloed: mixer.rules.soloAppID == app.id,
+            outputDevices: mixer.outputDevices,
+            macOutputName: mixer.outputDeviceName,
+            actions: SoundAppActions(
+                setVolume: { mixer.setVolume($0, for: app.id) },
+                toggleMute: { mixer.toggleMute(for: app.id) },
+                toggleSolo: { mixer.toggleSolo(app.id) },
+                setOutput: { mixer.setOutput($0, for: app.id) },
+                reset: { mixer.resetApp(app.id) },
+                playPause: isMedia ? { nowPlaying.playPause(app.id) } : nil,
+                nextTrack: isMedia ? { nowPlaying.nextTrack(app.id) } : nil
+            )
+        )
+    }
+
     private var permissionNote: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(L10n.string(
-                "ui.sound.permission.body",
-                default: "If an app's volume doesn't change while it plays, turn on System Audio Recording for Jack."
-            ))
+            Label {
+                Text(L10n.string(
+                    "ui.sound.permission.body",
+                    default: "If an app's volume doesn't change while it plays, turn on System Audio Recording for Jack."
+                ))
+                .fixedSize(horizontal: false, vertical: true)
+            } icon: {
+                Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
+            }
             .font(.system(size: 11.5))
-            .fixedSize(horizontal: false, vertical: true)
 
             Button(L10n.string("ui.sound.permission.open", default: "Open Privacy Settings")) {
                 if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AudioCapture") {
@@ -134,40 +259,50 @@ struct SoundMenuView: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(.quaternary))
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.06)))
         .padding(.bottom, 10)
     }
 
-    private var otherAppsHeader: some View {
-        Button {
-            withAnimation(.snappy(duration: 0.2)) { showsOtherApps.toggle() }
-        } label: {
-            HStack {
-                sectionLabel(L10n.string("ui.sound.other.apps", default: "Other apps"))
-                Spacer()
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .rotationEffect(.degrees(showsOtherApps ? 180 : 0))
+    // MARK: - Footer
+
+    private var footer: some View {
+        VStack(spacing: 2) {
+            SoundMenuItem(
+                symbol: "phone.fill",
+                title: L10n.string("ui.sound.call.mode", default: "Lower others during calls"),
+                detail: callModeDetail,
+                action: nil
+            ) {
+                Toggle("", isOn: $callModeEnabled)
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .labelsHidden()
             }
-            .padding(.top, 8)
-            .contentShape(Rectangle())
+            if mixer.showsCrackleFix {
+                SoundMenuItem(
+                    symbol: "waveform.path",
+                    title: L10n.string("ui.sound.crackle.fix", default: "Fix Crackling"),
+                    detail: L10n.string("ui.sound.crackle.fix.detail", default: "Restarts macOS audio. Asks for your password."),
+                    action: mixer.isRestartingAudio ? nil : { mixer.restartAudioSystem() }
+                ) {
+                    if mixer.isRestartingAudio { ProgressView().controlSize(.mini) }
+                }
+            }
+            SoundMenuItem(
+                symbol: "slider.horizontal.3",
+                title: L10n.string("ui.sound.settings", default: "Sound Settings…")
+            ) {
+                if let url = URL(string: "x-apple.systempreferences:com.apple.Sound-Settings.extension") {
+                    NSWorkspace.shared.open(url)
+                }
+                onDismiss()
+            }
         }
-        .buttonStyle(.plain)
     }
 
-    private func sectionLabel(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(.secondary)
-            .padding(.bottom, 2)
-    }
-
-    private func row(for app: SoundApp) -> some View {
-        SoundAppRow(
-            app: app,
-            onVolumeChange: { mixer.setVolume($0, for: app.id) },
-            onToggleMute: { mixer.toggleMute(for: app.id) }
-        )
+    /// "Zoom is using the mic" while call mode is lowering things.
+    private var callModeDetail: String? {
+        guard callModeEnabled, let caller = mixer.rules.micApps.sorted(by: { $0.key < $1.key }).first?.value else { return nil }
+        return String(format: L10n.string("ui.sound.call.mode.active", default: "%@ is using the mic"), caller)
     }
 }

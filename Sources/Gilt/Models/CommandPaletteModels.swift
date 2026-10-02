@@ -26,6 +26,7 @@ struct CommandAction: Identifiable {
 /// the sections render in, so actions always sit above content.
 enum CommandPaletteSection: Int, CaseIterable, Identifiable {
     case actions
+    case sound
     case clips
     case notes
     case meetings
@@ -36,6 +37,7 @@ enum CommandPaletteSection: Int, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .actions: return "Actions"
+        case .sound: return L10n.string("ui.sound", default: "Sound")
         case .clips: return "Clipboard"
         case .notes: return "Notes"
         case .meetings: return "Meetings"

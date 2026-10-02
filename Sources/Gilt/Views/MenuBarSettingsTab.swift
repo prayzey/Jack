@@ -39,17 +39,7 @@ struct MenuBarSettingsTab: View {
             }
 
             if #available(macOS 14.2, *) {
-                SettingsSection(L10n.string("ui.sound", default: "Sound")) {
-                    SettingsToggleRow(
-                        title: L10n.string("ui.sound.controls.in.menu.bar", default: "Sound controls in menu bar"),
-                        subtitle: L10n.string(
-                            "ui.sound.controls.in.menu.bar.subtitle",
-                            default: "Change the volume of each app from the menu bar"
-                        ),
-                        icon: "speaker.wave.2",
-                        isOn: $store.settings.showSoundControlsInMenuBar
-                    )
-                }
+                SoundSettingsSection()
             }
 
             popoverDisplaySection

@@ -2147,6 +2147,17 @@ struct AppSettings: Codable {
     /// Second menu bar item with system volume and per-app volume sliders.
     /// Only takes effect on macOS 14.2+, where Core Audio process taps exist.
     var showSoundControlsInMenuBar: Bool = true
+    /// Lower other apps while one of them has the microphone open (a call).
+    var soundCallModeEnabled: Bool = true
+    /// Volume other apps drop to during a call, 0...1.
+    var soundCallModeLevel: Double = 0.25
+    /// Shows "Fix crackling" in the sound panel. Off by default because it
+    /// restarts macOS audio and asks for an administrator password.
+    var soundShowCrackleFix: Bool = false
+    /// Meeting notes record only the app on the call instead of all sound.
+    var soundMeetingCallAudioOnly: Bool = true
+    /// Jack's character bobs along while music plays.
+    var soundJackDances: Bool = true
     var hideFromDock: Bool = false
     var globalShortcut: GlobalShortcut = .default
     /// 0 keeps the original glide; 1 makes tray open/close immediate.
@@ -2290,6 +2301,11 @@ struct AppSettings: Codable {
         case menuBarPopoverMessage
         case menuBarPopoverAppearance
         case showSoundControlsInMenuBar
+        case soundCallModeEnabled
+        case soundCallModeLevel
+        case soundShowCrackleFix
+        case soundMeetingCallAudioOnly
+        case soundJackDances
         case hideFromDock
         case globalShortcut
         case trayAnimationSpeed
@@ -2390,6 +2406,11 @@ struct AppSettings: Codable {
             menuBarPopoverAppearance = fallback
         }
         showSoundControlsInMenuBar = try container.decodeIfPresent(Bool.self, forKey: .showSoundControlsInMenuBar) ?? true
+        soundCallModeEnabled = try container.decodeIfPresent(Bool.self, forKey: .soundCallModeEnabled) ?? true
+        soundCallModeLevel = min(max(try container.decodeIfPresent(Double.self, forKey: .soundCallModeLevel) ?? 0.25, 0), 1)
+        soundShowCrackleFix = try container.decodeIfPresent(Bool.self, forKey: .soundShowCrackleFix) ?? false
+        soundMeetingCallAudioOnly = try container.decodeIfPresent(Bool.self, forKey: .soundMeetingCallAudioOnly) ?? true
+        soundJackDances = try container.decodeIfPresent(Bool.self, forKey: .soundJackDances) ?? true
         // Older builds stored popover ink only on the appearance blob.
         if menuBarPopoverTextColorHex == nil,
            let legacy = menuBarPopoverAppearance.customTextColorHex,
@@ -2528,6 +2549,11 @@ struct AppSettings: Codable {
         try container.encode(menuBarPopoverMessage, forKey: .menuBarPopoverMessage)
         try container.encode(menuBarPopoverAppearance, forKey: .menuBarPopoverAppearance)
         try container.encode(showSoundControlsInMenuBar, forKey: .showSoundControlsInMenuBar)
+        try container.encode(soundCallModeEnabled, forKey: .soundCallModeEnabled)
+        try container.encode(soundCallModeLevel, forKey: .soundCallModeLevel)
+        try container.encode(soundShowCrackleFix, forKey: .soundShowCrackleFix)
+        try container.encode(soundMeetingCallAudioOnly, forKey: .soundMeetingCallAudioOnly)
+        try container.encode(soundJackDances, forKey: .soundJackDances)
         try container.encode(hideFromDock, forKey: .hideFromDock)
         try container.encode(globalShortcut, forKey: .globalShortcut)
         try container.encode(min(max(trayAnimationSpeed, 0), 1), forKey: .trayAnimationSpeed)

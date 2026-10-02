@@ -69,6 +69,12 @@ final class JackChatStore: ObservableObject {
         let history = messages
         messages.append(userMessage)
 
+        // "mute chrome", "zoom to 30%": handled directly, no model needed.
+        if let reply = SoundCommandRunner.handle(userText) {
+            messages.append(JackChatMessage(role: .jack, text: reply))
+            return
+        }
+
         do {
             try await ensureModelReady()
             status = .thinking

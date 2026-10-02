@@ -2,9 +2,13 @@ import CoreAudio
 import Foundation
 import OSLog
 
-/// Lowers the system's default output volume while dictation is active so the
-/// user's voice doesn't have to compete with background music/video. Restores
-/// the original level when dictation stops.
+/// Lowers other audio while dictation is active so the user's voice doesn't
+/// have to compete with background music/video. Restores it when dictation stops.
+///
+/// When Jack's sound controls are running and allowed to capture audio, this
+/// lowers each app instead (`SoundMixer.beginDictationDucking`): the system
+/// volume knob stays put, and if Jack quits mid-dictation the apps come back
+/// on their own. Otherwise it falls back to the whole-Mac approach below.
 ///
 /// macOS doesn't expose a clean per-app ducking API outside of CoreAudio's
 /// private interfaces, so we operate on the **default output device**'s
@@ -27,6 +31,7 @@ final class AudioDucker {
     /// restores the original device, not whatever's plugged in now.
     private var deviceID: AudioDeviceID?
     private var activeFade: Task<Void, Never>?
+    private var duckingPerApp = false
 
     /// Fade the system volume down. `amount` is 0…1: 0 means do nothing,
     /// 1 means fully mute. Stores the pre-duck volume so `stopDucking` can
@@ -34,6 +39,10 @@ final class AudioDucker {
     func startDucking(amount: Double) async {
         let clamped = max(0, min(1, amount))
         guard clamped > 0 else { return }
+        if SoundMenuBarController.shared.mixer.beginDictationDucking(amount: clamped) {
+            duckingPerApp = true
+            return
+        }
         guard let device = Self.defaultOutputDevice() else {
             logger.warning("No default output device — skipping duck")
             return
@@ -51,6 +60,11 @@ final class AudioDucker {
     /// Fade back up to whatever level we captured on `startDucking`. No-op
     /// if we haven't ducked anything.
     func stopDucking() async {
+        if duckingPerApp {
+            duckingPerApp = false
+            SoundMenuBarController.shared.mixer.endDictationDucking()
+            return
+        }
         guard let device = deviceID, let original = originalVolume else { return }
         let now = Self.readVolume(on: device) ?? 0
         await fade(on: device, from: now, to: original)

@@ -711,9 +711,11 @@ private final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelega
         // SCStreamError; we let it propagate so the UI can show a clear message.
         let content: SCShareableContent
         do {
+            // All windows, not only on-screen ones, so a minimized music app
+            // still shows up in `applications` and can be left out below.
             content = try await SCShareableContent.excludingDesktopWindows(
                 false,
-                onScreenWindowsOnly: true
+                onScreenWindowsOnly: false
             )
         } catch {
             logger.error("SCShareableContent failed: \(error.localizedDescription, privacy: .public)")
@@ -724,7 +726,7 @@ private final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelega
             throw MeetingAudioError.noInput
         }
 
-        let filter = SCContentFilter(display: display, excludingWindows: [])
+        let filter = await filter(for: display, content: content)
         let configuration = SCStreamConfiguration()
         // We need an SCStream for the audio output but don't actually use the
         // video frames. The minimum width/height accepted varies by macOS
@@ -759,6 +761,24 @@ private final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelega
             self.stream = stream
         }
         logger.info("SCStream started: sampleRate=\(sampleRate, privacy: .public)")
+    }
+
+    /// During a call, record only the call: leave out every app that isn't
+    /// using the mic (music, videos, notification pings). Excluding the others,
+    /// rather than including only the call app, fails safe: audio macOS can't
+    /// attribute to an app (a browser helper, say) is still recorded. App audio
+    /// filtering only works on macOS 14.4+; earlier it records everything.
+    private func filter(for display: SCDisplay, content: SCShareableContent) async -> SCContentFilter {
+        let callApps: Set<String> = await MainActor.run {
+            guard AppStoreReferences.shared.clipboardStore?.settings.soundMeetingCallAudioOnly ?? true else { return [] }
+            return SoundMixer.appsUsingMicrophone()
+        }
+        guard !callApps.isEmpty, #available(macOS 14.4, *) else {
+            return SCContentFilter(display: display, excludingWindows: [])
+        }
+        let others = content.applications.filter { !callApps.contains($0.bundleIdentifier) }
+        logger.info("Recording only the call: \(callApps.sorted().joined(separator: ", "), privacy: .public)")
+        return SCContentFilter(display: display, excludingApplications: others, exceptingWindows: [])
     }
 
     func stop() async throws {

@@ -38,6 +38,9 @@ final class PulseCharacterPerformer {
     /// Used by `parkAboveDock(on:)` so a parked Jack doesn't carry an empty
     /// bubble around.
     var hideBubbleDuringWalk = false
+    /// Loudness (0...1) of what the Mac is playing. While it's up, a parked
+    /// Jack holds his spot and bobs along instead of starting his next walk.
+    var musicLevel: Float = 0
 
     private let displayHeight: CGFloat
     private let walkProfile: WalkProfile
@@ -201,12 +204,19 @@ final class PulseCharacterPerformer {
         let now = CACurrentMediaTime()
 
         if patrolIsPaused {
-            if now >= patrolPauseEndTime {
+            let dancing = musicLevel > 0.08
+            if now >= patrolPauseEndTime, !dancing {
                 startPatrolWalk()
             }
             // While paused, keep the window pinned at the last position so
             // a screen resolution change still places Jack correctly.
-            let frame = patrolFrame(at: patrolPositionProgress, goingRight: patrolGoingRight)
+            var frame = patrolFrame(at: patrolPositionProgress, goingRight: patrolGoingRight)
+            if dancing {
+                // Two hops a second (about 120 BPM, where most pop sits);
+                // louder music, higher hops.
+                let hop = abs(sin(now * .pi * 2))
+                frame.origin.y += CGFloat(hop) * (2 + 6 * CGFloat(min(musicLevel, 1)))
+            }
             characterWindow?.setFrameOrigin(frame.origin)
             return
         }

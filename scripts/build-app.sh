@@ -144,6 +144,13 @@ if [ -f "$ICON_ICNS" ]; then
     cp "$ICON_ICNS" "$RESOURCES/AppIcon.icns"
 fi
 
+# The "Jack Tab Volume" browser extension ships unpacked so users can point
+# their browser's "Load unpacked" at it (see BrowserExtension/README.md).
+if [ -d BrowserExtension ]; then
+    rm -rf "$RESOURCES/BrowserExtension"
+    ditto BrowserExtension "$RESOURCES/BrowserExtension"
+fi
+
 # --- macOS 26 Liquid Glass app icon (Icon Composer) ---
 # AppIcon.icon is a layered Icon Composer bundle. actool compiles it to Assets.car, which
 # macOS 26+ uses (via CFBundleIconName) to render the icon with the Liquid Glass material
@@ -277,7 +284,7 @@ cat > "$CONTENTS/Info.plist" << PLIST
     <key>NSAudioCaptureUsageDescription</key>
     <string>Jack uses this to change the volume of each app. The audio is played straight back to your speakers and is never recorded or saved.</string>
     <key>NSAppleEventsUsageDescription</key>
-    <string>Jack uses this to control Spotify playback when you ask it to with your voice.</string>
+    <string>Jack uses this to show what's playing in Spotify and Music, and to control playback from the sound panel or when you ask by voice.</string>
     <key>UTExportedTypeDeclarations</key>
     <array>
         <dict>

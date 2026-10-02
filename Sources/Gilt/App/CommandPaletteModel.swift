@@ -118,6 +118,53 @@ final class CommandPaletteModel: ObservableObject {
         allActions = list
     }
 
+    /// Typing "spotify 40" offers "Set Spotify to 40%"; typing an app's name
+    /// offers mute and solo for it.
+    private func soundItems(for query: String) -> [CommandPaletteItem] {
+        let mixer = SoundMenuBarController.shared.mixer
+        let targets = SoundCommandRunner.targets()
+        guard !targets.isEmpty else { return [] }
+        var items: [CommandPaletteItem] = []
+        func add(_ command: SoundCommand, _ title: String, _ symbol: String) {
+            items.append(CommandPaletteItem(
+                id: "sound-\(title)",
+                section: .sound,
+                title: title,
+                subtitle: nil,
+                systemImage: symbol,
+                accent: ClipTypePresentation.accentColor(for: .audio),
+                trailingText: nil,
+                run: { SoundCommandRunner.run(command) }
+            ))
+        }
+        if let command = SoundCommand.parse(query, targets: targets) {
+            switch command {
+            case .setVolume(let target, let value):
+                add(command, String(format: L10n.string("sound.palette.set", default: "Set %@ to %d%%"), target.name, Int((value * 100).rounded())), "speaker.wave.2")
+            case .lower(let target):
+                add(command, String(format: L10n.string("sound.palette.lower", default: "Turn %@ down"), target.name), "speaker.wave.1")
+            case .raise(let target):
+                add(command, String(format: L10n.string("sound.palette.raise", default: "Turn %@ up"), target.name), "speaker.wave.3")
+            default:
+                break
+            }
+        }
+        for target in targets where target.kind == .app
+            && CommandPaletteMatcher.matches(query: query, fields: [target.name] + target.aliases) {
+            let muted = mixer.levels[target.id]?.isMuted == true
+            add(muted ? .unmute(target) : .mute(target),
+                String(format: muted ? L10n.string("sound.palette.unmute", default: "Unmute %@")
+                    : L10n.string("sound.palette.mute", default: "Mute %@"), target.name),
+                muted ? "speaker.wave.2" : "speaker.slash")
+            let soloed = mixer.rules.soloAppID == target.id
+            add(.solo(target),
+                String(format: soloed ? L10n.string("sound.palette.unsolo", default: "Stop soloing %@")
+                    : L10n.string("sound.palette.solo", default: "Hear only %@"), target.name),
+                "headphones")
+        }
+        return Array(items.prefix(5))
+    }
+
     private func rebuild() {
         guard let store else { items = []; return }
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -137,6 +184,8 @@ final class CommandPaletteModel: ObservableObject {
                 run: action.run
             ))
         }
+
+        if searching { result += soundItems(for: trimmed) }
 
         // Clips — newest first; show 5 recent by default, more while searching.
         let clipMatches = store.clips
