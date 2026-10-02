@@ -99,9 +99,6 @@ struct JackApp: App {
     @StateObject private var store: ClipboardStore
     @StateObject private var dictationStore: DictationStore
     @StateObject private var dictationCoordinator: DictationCoordinator
-    /// Plain `let`, not `@StateObject`: only the menu bar icon and panel
-    /// observe it, so its frequent updates don't re-evaluate this whole scene.
-    private let soundMixer = SoundMixer()
     // Hotkey monitor stays alive for the app's lifetime via a static
     // reference inside `DictationLauncher` (set at first call site below).
 
@@ -176,7 +173,7 @@ struct JackApp: App {
         // `MenuBarTextItemController.finishLaunchSetup()` — NSStatusBar is
         // not reliable when requested from `init`.
         MenuBarTextItemController.shared.bind(to: store)
-        soundMixer.bind(to: store)
+        SoundMenuBarController.shared.bind(to: store)
         AppWindowManager.shared.configureLaunchPresentation(
             shouldShowOnboarding: store.shouldShowOnboarding,
             savedViewMode: store.settings.viewMode
@@ -205,18 +202,6 @@ struct JackApp: App {
                 return store.settings.showInMenuBar && !textModeActive
             },
             set: { _ in /* no-op: see docstring above */ }
-        )
-    }
-
-    /// The speaker item needs Core Audio process taps, which arrived in 14.2.
-    /// Removing the item from the menu bar (⌘-drag) turns the setting off.
-    private var soundControlsInsertedBinding: Binding<Bool> {
-        Binding(
-            get: {
-                guard #available(macOS 14.2, *) else { return false }
-                return store.settings.showSoundControlsInMenuBar
-            },
-            set: { store.settings.showSoundControlsInMenuBar = $0 }
         )
     }
 
@@ -503,12 +488,5 @@ struct JackApp: App {
             MenuBarPathOnlyIcon()
                 .accessibilityLabel(AppBrand.displayName)
         }
-
-        MenuBarExtra(isInserted: soundControlsInsertedBinding) {
-            SoundMenuView(mixer: soundMixer)
-        } label: {
-            SoundMenuBarIcon(mixer: soundMixer)
-        }
-        .menuBarExtraStyle(.window)
     }
 }

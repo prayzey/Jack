@@ -50,6 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // persisted custom-text menu bar item and Jack presence.
         Task { @MainActor in
             MenuBarTextItemController.shared.finishLaunchSetup()
+            SoundMenuBarController.shared.finishLaunchSetup()
             AppStoreReferences.shared.clipboardStore?.applyInitialJackPresence()
         }
     }

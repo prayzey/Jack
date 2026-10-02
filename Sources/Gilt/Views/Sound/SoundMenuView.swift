@@ -5,7 +5,13 @@ import SwiftUI
 /// a volume slider for every app that has opened audio, playing apps first.
 struct SoundMenuView: View {
     @ObservedObject var mixer: SoundMixer
+    /// The panel window sizes itself from this, so it grows downward.
+    var onHeightChange: (CGFloat) -> Void = { _ in }
+    var onDismiss: () -> Void = {}
     @State private var showsOtherApps = false
+
+    /// "Other apps" scrolls past this many rows so the panel stays on screen.
+    private static let maxOtherAppRows = 6
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -30,7 +36,16 @@ struct SoundMenuView: View {
             if !mixer.quietApps.isEmpty {
                 otherAppsHeader
                 if showsOtherApps {
-                    ForEach(mixer.quietApps) { row(for: $0) }
+                    if mixer.quietApps.count > Self.maxOtherAppRows {
+                        ScrollView {
+                            VStack(spacing: 0) { ForEach(mixer.quietApps) { row(for: $0) } }
+                        }
+                        // Keeps an always-visible scroll bar off the mute buttons.
+                        .contentMargins(.trailing, 10, for: .scrollContent)
+                        .frame(height: CGFloat(Self.maxOtherAppRows) * SoundAppRow.height)
+                    } else {
+                        ForEach(mixer.quietApps) { row(for: $0) }
+                    }
                 }
             }
 
@@ -40,12 +55,17 @@ struct SoundMenuView: View {
                 if let url = URL(string: "x-apple.systempreferences:com.apple.Sound-Settings.extension") {
                     NSWorkspace.shared.open(url)
                 }
+                onDismiss()
             }
             .buttonStyle(.plain)
             .font(.system(size: 12.5))
         }
         .padding(14)
         .frame(width: 320)
+        .fixedSize(horizontal: false, vertical: true)
+        .onGeometryChange(for: CGFloat.self, of: \.size.height, action: onHeightChange)
+        // Pinned to the top so content animates downward while the panel resizes.
+        .frame(maxHeight: .infinity, alignment: .top)
     }
 
     private var masterSection: some View {
@@ -108,6 +128,7 @@ struct SoundMenuView: View {
                 if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AudioCapture") {
                     NSWorkspace.shared.open(url)
                 }
+                onDismiss()
             }
             .controlSize(.small)
         }

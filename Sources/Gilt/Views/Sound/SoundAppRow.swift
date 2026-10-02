@@ -2,6 +2,9 @@ import SwiftUI
 
 /// One app in the sound panel: icon, name, volume slider, and mute button.
 struct SoundAppRow: View {
+    /// Fixed so a scrolling list can show an exact number of rows.
+    static let height: CGFloat = 42
+
     let app: SoundApp
     let onVolumeChange: (Double) -> Void
     let onToggleMute: () -> Void
@@ -44,6 +47,6 @@ struct SoundAppRow: View {
                                 ? L10n.string("ui.sound.unmute", default: "Unmute")
                                 : L10n.string("ui.sound.mute", default: "Mute"))
         }
-        .padding(.vertical, 4)
+        .frame(height: Self.height)
     }
 }
