@@ -42,6 +42,13 @@ struct SoundSettingsSection: View {
                 }
                 SettingsDivider()
                 SettingsToggleRow(
+                    title: L10n.string("ui.sound.scenes.setting", default: "Scenes"),
+                    subtitle: L10n.string("ui.sound.scenes.setting.subtitle", default: "Save sets of app volumes in the sound panel and switch between them"),
+                    icon: "square.stack",
+                    isOn: $store.settings.soundShowScenes
+                )
+                SettingsDivider()
+                SettingsToggleRow(
                     title: L10n.string("ui.sound.meeting.call.only", default: "Meeting notes record only the call"),
                     subtitle: L10n.string("ui.sound.meeting.call.only.subtitle", default: "Leaves out music and other apps while a call app uses the mic. Needs macOS 14.4 or later."),
                     icon: "waveform",

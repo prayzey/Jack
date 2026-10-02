@@ -109,6 +109,7 @@ final class SoundMixer: ObservableObject {
     @Published private(set) var scenes: [SoundScene] = []
     @Published private(set) var rules = SoundMixRules()
     @Published private(set) var showsCrackleFix = false
+    @Published private(set) var showsScenes = false
     @Published private(set) var isRestartingAudio = false
 
     let meters = SoundMeters()
@@ -188,13 +189,14 @@ final class SoundMixer: ObservableObject {
             }
             .store(in: &cancellables)
         store.$settings
-            .map { ($0.soundCallModeEnabled ? Float($0.soundCallModeLevel) : nil, $0.soundShowCrackleFix) }
+            .map { ($0.soundCallModeEnabled ? Float($0.soundCallModeLevel) : nil, $0.soundShowCrackleFix, $0.soundShowScenes) }
             .removeDuplicates { $0 == $1 }
             .receive(on: RunLoop.main)
-            .sink { [weak self] callLevel, crackleFix in
+            .sink { [weak self] callLevel, crackleFix, scenes in
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     self.showsCrackleFix = crackleFix
+                    self.showsScenes = scenes
                     self.callModeLevel = callLevel
                     self.updateRules(ramp: 0.4)
                 }
@@ -874,6 +876,7 @@ final class SoundMixer: ObservableObject {
         masterVolume = volume
         self.scenes = scenes
         self.rules = rules
+        showsScenes = !scenes.isEmpty
     }
     #endif
 

@@ -1157,3 +1157,5 @@
 "sound.palette.mute" = "%@ stummschalten";
 "sound.palette.unsolo" = "Solo für %@ beenden";
 "sound.palette.solo" = "Nur %@ hören";
+"ui.sound.scenes.setting" = "Szenen";
+"ui.sound.scenes.setting.subtitle" = "Sätze von App-Lautstärken im Tonbereich sichern und zwischen ihnen wechseln";

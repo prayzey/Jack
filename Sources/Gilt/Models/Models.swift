@@ -2154,6 +2154,9 @@ struct AppSettings: Codable {
     /// Shows "Fix crackling" in the sound panel. Off by default because it
     /// restarts macOS audio and asks for an administrator password.
     var soundShowCrackleFix: Bool = false
+    /// Saved app-volume scenes in the sound panel. Off by default to keep
+    /// the panel simple.
+    var soundShowScenes: Bool = false
     /// Meeting notes record only the app on the call instead of all sound.
     var soundMeetingCallAudioOnly: Bool = true
     /// Jack's character bobs along while music plays.
@@ -2304,6 +2307,7 @@ struct AppSettings: Codable {
         case soundCallModeEnabled
         case soundCallModeLevel
         case soundShowCrackleFix
+        case soundShowScenes
         case soundMeetingCallAudioOnly
         case soundJackDances
         case hideFromDock
@@ -2409,6 +2413,7 @@ struct AppSettings: Codable {
         soundCallModeEnabled = try container.decodeIfPresent(Bool.self, forKey: .soundCallModeEnabled) ?? true
         soundCallModeLevel = min(max(try container.decodeIfPresent(Double.self, forKey: .soundCallModeLevel) ?? 0.25, 0), 1)
         soundShowCrackleFix = try container.decodeIfPresent(Bool.self, forKey: .soundShowCrackleFix) ?? false
+        soundShowScenes = try container.decodeIfPresent(Bool.self, forKey: .soundShowScenes) ?? false
         soundMeetingCallAudioOnly = try container.decodeIfPresent(Bool.self, forKey: .soundMeetingCallAudioOnly) ?? true
         soundJackDances = try container.decodeIfPresent(Bool.self, forKey: .soundJackDances) ?? true
         // Older builds stored popover ink only on the appearance blob.
@@ -2552,6 +2557,7 @@ struct AppSettings: Codable {
         try container.encode(soundCallModeEnabled, forKey: .soundCallModeEnabled)
         try container.encode(soundCallModeLevel, forKey: .soundCallModeLevel)
         try container.encode(soundShowCrackleFix, forKey: .soundShowCrackleFix)
+        try container.encode(soundShowScenes, forKey: .soundShowScenes)
         try container.encode(soundMeetingCallAudioOnly, forKey: .soundMeetingCallAudioOnly)
         try container.encode(soundJackDances, forKey: .soundJackDances)
         try container.encode(hideFromDock, forKey: .hideFromDock)

@@ -8,7 +8,14 @@ import SwiftUI
 /// Deliberately not a SwiftUI `MenuBarExtra`: its window doesn't follow
 /// content height changes. Expanding "Other apps" grew it upward past the
 /// menu bar, and collapsing left it tall with the content centered in an
-/// empty band. This panel stays pinned under the icon and grows downward.
+/// empty band.
+///
+/// The window here is a fixed, transparent canvas that reaches from just under
+/// the icon to the bottom of the screen; SwiftUI draws the visible panel
+/// (material, corners, shadow) inside it. Resizing the window in step with
+/// the content made everything shake, because AppKit moves a window's top and
+/// bottom edges separately while SwiftUI animates the rows. With one
+/// animation system doing all of it, expanding and collapsing stay smooth.
 @MainActor
 final class SoundMenuBarController: NSObject {
     static let shared = SoundMenuBarController()
@@ -19,6 +26,8 @@ final class SoundMenuBarController: NSObject {
     private static let panelWidth: CGFloat = 340
     /// Space between the menu bar and the panel, like system menu bar panels.
     private static let menuBarGap: CGFloat = 5
+    /// Transparent room around the drawn panel for its shadow.
+    static let shadowInset = NSEdgeInsets(top: 4, left: 24, bottom: 32, right: 24)
 
     private var statusItem: NSStatusItem?
     private var panel: NSPanel?
@@ -152,10 +161,8 @@ final class SoundMenuBarController: NSObject {
         isOpen = true
         frontmostAtOpen = NSWorkspace.shared.frontmostApplication
         anchor = iconFrame(near: NSEvent.mouseLocation)
-        // Lay out now so app-list changes made while closed report their
-        // height before the panel is placed.
+        place(panel)
         hostingView?.layoutSubtreeIfNeeded()
-        place(panel, animated: false)
         panel.alphaValue = 0
         panel.orderFrontRegardless()
         panel.makeKey()
@@ -204,17 +211,11 @@ final class SoundMenuBarController: NSObject {
         panel.isReleasedWhenClosed = false
         panel.backgroundColor = .clear
         panel.isOpaque = false
-        panel.hasShadow = true
+        // SwiftUI draws the shadow around the visible panel; a window shadow
+        // would outline the whole transparent canvas.
+        panel.hasShadow = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
         panel.onEscape = { [weak self] in self?.closePanel("escape") }
-
-        let background = NSVisualEffectView()
-        background.material = .menu
-        background.blendingMode = .behindWindow
-        background.state = .active
-        background.wantsLayer = true
-        background.layer?.cornerRadius = 12
-        background.layer?.masksToBounds = true
 
         let hostingView = NSHostingView(rootView: SoundMenuView(
             mixer: mixer,
@@ -233,50 +234,53 @@ final class SoundMenuBarController: NSObject {
                 SettingsNavigation.openSettings(tabRawValue: SettingsTab.menuBar.rawValue)
             }
         ))
-        // The panel sizes itself from the reported height; letting the
-        // hosting view resize the window too would fight that.
+        // The window's size is set by `place`, never by the content.
         hostingView.sizingOptions = []
-        hostingView.autoresizingMask = [.width, .height]
-        hostingView.frame = background.bounds
-        background.addSubview(hostingView)
-        panel.contentView = background
-        // First layout reports the content height through onHeightChange.
-        hostingView.layoutSubtreeIfNeeded()
+        panel.contentView = hostingView
 
         self.panel = panel
         self.hostingView = hostingView
         return panel
     }
 
+    /// Only used to tell clicks on the drawn panel from clicks on the
+    /// transparent canvas around it.
     private func contentHeightChanged(_ height: CGFloat) {
-        guard abs(height - contentHeight) > 0.5 else { return }
         contentHeight = height
-        if let panel, isOpen { place(panel, animated: true) }
     }
 
-    /// Pins the panel's top edge just under the icon and lets the height
-    /// change at the bottom, clamped to the screen.
-    private func place(_ panel: NSPanel, animated: Bool) {
+    /// Puts the canvas under the icon: the drawn panel's top edge sits just
+    /// below the menu bar, and the canvas runs to the bottom of the screen so
+    /// the panel can grow without the window ever changing size.
+    private func place(_ panel: NSPanel) {
         guard let iconFrame = anchor,
               let screen = NSScreen.screens.first(where: { $0.frame.intersects(iconFrame) })
         else { return }
         let visible = screen.visibleFrame
-        let top = iconFrame.minY - Self.menuBarGap
-        // SwiftUI only reports height changes, so this is the last known
-        // height; before the very first report, open at a typical size and
-        // let the report animate it into place.
-        let height = min(contentHeight > 0 ? contentHeight : 180, top - visible.minY - 8)
-        let x = min(max(iconFrame.minX, visible.minX + 8), visible.maxX - Self.panelWidth - 8)
-        let frame = NSRect(x: x, y: top - height, width: Self.panelWidth, height: height)
-        if animated {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.2
-                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                panel.animator().setFrame(frame, display: true)
-            }
-        } else {
-            panel.setFrame(frame, display: true)
-        }
+        let inset = Self.shadowInset
+        let top = iconFrame.minY - Self.menuBarGap + inset.top
+        let panelX = min(max(iconFrame.minX, visible.minX + 8), visible.maxX - Self.panelWidth - 8)
+        panel.setFrame(
+            NSRect(
+                x: panelX - inset.left,
+                y: visible.minY,
+                width: Self.panelWidth + inset.left + inset.right,
+                height: top - visible.minY
+            ),
+            display: false
+        )
+    }
+
+    /// The drawn panel, in screen coordinates.
+    private var visiblePanelFrame: NSRect? {
+        guard let panel else { return nil }
+        let inset = Self.shadowInset
+        return NSRect(
+            x: panel.frame.minX + inset.left,
+            y: panel.frame.maxY - inset.top - contentHeight,
+            width: Self.panelWidth,
+            height: contentHeight
+        )
     }
 
     /// Closes on a click anywhere outside the panel.
@@ -292,10 +296,19 @@ final class SoundMenuBarController: NSObject {
             }
         }
         let local = NSEvent.addLocalMonitorForEvents(matching: clicks) { [weak self] event in
+            guard let self else { return event }
+            if event.window === self.panel {
+                // The transparent canvas around the drawn panel counts as outside.
+                if let frame = self.visiblePanelFrame, !frame.contains(NSEvent.mouseLocation) {
+                    self.closePanel("click beside the panel")
+                    return nil
+                }
+                return event
+            }
             // The panel's own pop-up menus (output picker, right-click) are
             // separate windows above it; clicking in them isn't "outside".
             let inMenu = (event.window?.level.rawValue ?? 0) >= NSWindow.Level.popUpMenu.rawValue
-            if let self, !inMenu, event.window !== self.panel, event.window !== self.statusItem?.button?.window {
+            if !inMenu, event.window !== self.statusItem?.button?.window {
                 self.closePanel("click in another Jack window")
             }
             return event

@@ -1157,3 +1157,5 @@
 "sound.palette.mute" = "Silenciar %@";
 "sound.palette.unsolo" = "Quitar solo de %@";
 "sound.palette.solo" = "Oír solo %@";
+"ui.sound.scenes.setting" = "Escenas";
+"ui.sound.scenes.setting.subtitle" = "Guarda conjuntos de volúmenes de apps en el panel de sonido y cambia entre ellos";

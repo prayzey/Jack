@@ -1167,3 +1167,5 @@
 "sound.palette.mute" = "Mute %@";
 "sound.palette.unsolo" = "Stop soloing %@";
 "sound.palette.solo" = "Hear only %@";
+"ui.sound.scenes.setting" = "Scenes";
+"ui.sound.scenes.setting.subtitle" = "Save sets of app volumes in the sound panel and switch between them";

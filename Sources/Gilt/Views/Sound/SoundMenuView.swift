@@ -25,15 +25,17 @@ struct SoundMenuView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            SoundScenesBar(
-                scenes: mixer.scenes,
-                currentID: mixer.currentSceneID,
-                onApply: mixer.applyScene,
-                onSave: mixer.saveScene(named:),
-                onDelete: mixer.deleteScene
-            )
-            .padding(.horizontal, 8)
-            .padding(.top, 12)
+            if mixer.showsScenes {
+                SoundScenesBar(
+                    scenes: mixer.scenes,
+                    currentID: mixer.currentSceneID,
+                    onApply: mixer.applyScene,
+                    onSave: mixer.saveScene(named:),
+                    onDelete: mixer.deleteScene
+                )
+                .padding(.horizontal, 8)
+                .padding(.top, 10)
+            }
 
             divider
 
@@ -64,11 +66,39 @@ struct SoundMenuView: View {
         .padding(10)
         .frame(width: 340)
         .fixedSize(horizontal: false, vertical: true)
+        .background { panelChrome }
+        // Nothing draws outside the panel's rounded edge, even mid-animation.
+        .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous))
+        .background { panelShadow }
+        .overlay {
+            RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.11), lineWidth: 0.5)
+        }
         .animation(.snappy(duration: 0.22), value: mixer.activeApps.map(\.id))
         .animation(.snappy(duration: 0.22), value: tabs.tabs.map(\.id))
         .onGeometryChange(for: CGFloat.self, of: \.size.height, action: onHeightChange)
-        // Pinned to the top so content animates downward while the panel resizes.
-        .frame(maxHeight: .infinity, alignment: .top)
+        // The window is a fixed canvas; the panel hangs from its top and the
+        // room around it is for the shadow.
+        .padding(.top, SoundMenuBarController.shadowInset.top)
+        .padding(.horizontal, SoundMenuBarController.shadowInset.left)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private static let cornerRadius: CGFloat = 12
+
+    /// Material and corners, drawn here rather than by the window so they
+    /// resize in the same animation as the content.
+    private var panelChrome: some View {
+        SoundPanelBackground()
+            .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    /// Kept outside the clip so the shadow can spread past the panel's edge.
+    private var panelShadow: some View {
+        RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
+            .fill(Color(nsColor: .windowBackgroundColor))
+            .shadow(color: .black.opacity(0.24), radius: 18, y: 10)
+            .shadow(color: .black.opacity(0.12), radius: 2, y: 1)
     }
 
     // MARK: - Header
@@ -177,7 +207,7 @@ struct SoundMenuView: View {
     private var otherAppsSection: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
-                withAnimation(.snappy(duration: 0.22)) { showsOtherApps.toggle() }
+                withAnimation(.smooth(duration: 0.3)) { showsOtherApps.toggle() }
             } label: {
                 HStack(spacing: 6) {
                     Text(L10n.string("ui.sound.other.apps", default: "Other apps"))
@@ -198,19 +228,36 @@ struct SoundMenuView: View {
             .buttonStyle(.plain)
             .padding(.top, 8)
 
-            if showsOtherApps {
-                let rows = VStack(spacing: 0) {
-                    ForEach(mixer.quietApps) { row(for: $0, compact: true) }
-                }
-                if mixer.quietApps.count > Self.maxOtherAppRows {
-                    ScrollView { rows }
-                        // Keeps an always-visible scroll bar off the mute buttons.
-                        .contentMargins(.trailing, 10, for: .scrollContent)
-                        .frame(height: CGFloat(Self.maxOtherAppRows) * SoundAppRow.compactHeight)
-                } else {
-                    rows
-                }
-            }
+            otherAppsList
+                // Grow from nothing instead of inserting at full size: the
+                // rows are revealed top to bottom while the footer and the
+                // panel's background move down in the same animation, so
+                // nothing overlaps or spills past the panel's edge.
+                .frame(height: showsOtherApps ? otherAppsHeight : 0, alignment: .top)
+                .clipped()
+                .opacity(showsOtherApps ? 1 : 0)
+                .allowsHitTesting(showsOtherApps)
+                .accessibilityHidden(!showsOtherApps)
+        }
+    }
+
+    /// Rows have a fixed height, so the list's height is known exactly and
+    /// can animate.
+    private var otherAppsHeight: CGFloat {
+        CGFloat(min(mixer.quietApps.count, Self.maxOtherAppRows)) * SoundAppRow.compactHeight
+    }
+
+    @ViewBuilder
+    private var otherAppsList: some View {
+        let rows = VStack(spacing: 0) {
+            ForEach(mixer.quietApps) { row(for: $0, compact: true) }
+        }
+        if mixer.quietApps.count > Self.maxOtherAppRows {
+            ScrollView { rows }
+                // Keeps an always-visible scroll bar off the mute buttons.
+                .contentMargins(.trailing, 10, for: .scrollContent)
+        } else {
+            rows
         }
     }
 
