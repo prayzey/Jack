@@ -29,6 +29,7 @@ struct DictationHistoryView: View {
                     systemImage: "text.bubble",
                     description: Text(L10n.string("dictation.history.emptyHint", default: "Your finished dictations appear here when saving is on. You can copy the original words or the finished text."))
                 )
+                .frame(maxWidth: .infinity)
             } else {
                 ForEach(store.history) { entry in
                     VStack(alignment: .leading, spacing: 10) {

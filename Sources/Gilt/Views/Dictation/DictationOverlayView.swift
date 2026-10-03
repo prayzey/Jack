@@ -32,6 +32,9 @@ struct DictationOverlayView: View {
                         sessionCard(width: captionWidth)
                     }
                 }
+                // System controls (the failure card's buttons) follow the card's
+                // theme, not the Mac's appearance, or light themes get white-on-white.
+                .environment(\.colorScheme, palette.isDarkShell ? .dark : .light)
                 .transition(.opacity)
                 .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: displayPhase)
                 .frame(width: captionWidth)
