@@ -1,51 +1,39 @@
 import AppKit
 import ApplicationServices
-import CryptoKit
 import OSLog
 
-/// An ephemeral destination snapshot. Never persisted; keep only a digest of
-/// the field's contents so a later edit can prevent an unexpected paste.
+/// An ephemeral destination snapshot: the app that was frontmost when
+/// dictation started and, when AX exposes one, its focused text field.
+/// Never persisted, and holds none of the field's contents.
 struct DictationPasteTarget: @unchecked Sendable {
     let pid: pid_t
-    let element: AXUIElement
-    let valueDigest: SHA256.Digest
-    let selection: CFRange?
+    let element: AXUIElement?
 
-    static func capture(pid: pid_t) -> DictationPasteTarget? {
-        guard let element = AXFocusedElementReader.focusedTextElement(pid: pid) else { return nil }
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &value) == .success,
-              let text = value as? String, text.utf8.count <= 1_000_000 else { return nil }
-        var selected: CFTypeRef?
-        var range = CFRange()
-        let hasSelection = AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &selected) == .success
-            && selected.map { CFGetTypeID($0) == AXValueGetTypeID() } == true
-            && AXValueGetValue(selected as! AXValue, .cfRange, &range)
-        return DictationPasteTarget(
-            pid: pid, element: element, valueDigest: SHA256.hash(data: Data(text.utf8)),
-            selection: hasSelection ? range : nil
-        )
+    static func capture(pid: pid_t) -> DictationPasteTarget {
+        DictationPasteTarget(pid: pid, element: AXFocusedElementReader.focusedTextElement(pid: pid))
     }
 
+    /// Paste only where dictation started: the same app, and the same text
+    /// field when both reads succeed. The field's text and caret are allowed
+    /// to change, because editors that restyle or autosave, terminals with
+    /// streaming output, and a previous paste landing late all change them
+    /// without the user going anywhere. A failed AX read is not evidence of a
+    /// move either: Electron apps answer only once their tree wakes up, and a
+    /// busy main thread times out queries into Jack's own windows.
     @MainActor
     func isCurrent() async -> Bool {
+        let logger = Logger(subsystem: AppBrand.logSubsystem, category: "DictationDelivery")
         guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else {
-            Logger(subsystem: AppBrand.logSubsystem, category: "DictationDelivery")
-                .notice("Destination verification: frontmost app changed")
+            logger.notice("Destination verification: frontmost app changed")
             return false
         }
-        let current = await Task.detached { Self.capture(pid: pid) }.value
-        guard let current else {
-            Logger(subsystem: AppBrand.logSubsystem, category: "DictationDelivery")
-                .notice("Destination verification: focused text field unavailable")
-            return false
+        guard let element else { return true }
+        let pid = pid
+        guard let current = await Task.detached(operation: { Self.capture(pid: pid) }).value.element else {
+            return true
         }
-        Logger(subsystem: AppBrand.logSubsystem, category: "DictationDelivery")
-            .notice("Destination verification: sameField=\(CFEqual(element, current.element), privacy: .public) sameText=\(valueDigest == current.valueDigest, privacy: .public) sameSelection=\(selection?.location == current.selection?.location && selection?.length == current.selection?.length, privacy: .public)")
-        return NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
-            && CFEqual(element, current.element)
-            && valueDigest == current.valueDigest
-            && selection?.location == current.selection?.location
-            && selection?.length == current.selection?.length
+        let sameField = CFEqual(element, current)
+        logger.notice("Destination verification: sameField=\(sameField, privacy: .public)")
+        return sameField && NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
     }
 }

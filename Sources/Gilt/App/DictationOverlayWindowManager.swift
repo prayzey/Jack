@@ -66,10 +66,10 @@ final class DictationOverlayWindowManager {
             installEscapeMonitor()
             show()
         case .done:
+            // The coordinator owns the dwell (longer when the text was only
+            // copied) and hides the card by moving to idle. A fixed timer here
+            // hid the "Press ⌘V" hint before anyone could read it.
             removeEscapeMonitor()
-            // A quick beat for the "Pasted" flash, then get out of the way.
-            // Matches the coordinator's 0.5s done dwell before resetToIdle().
-            scheduleHide(after: 0.45)
         case .failed:
             hideTask?.cancel()
             hideTask = nil

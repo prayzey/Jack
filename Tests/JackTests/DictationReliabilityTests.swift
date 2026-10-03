@@ -1,5 +1,4 @@
 import AppKit
-import CryptoKit
 import AVFoundation
 import SwiftUI
 import XCTest
@@ -143,8 +142,18 @@ final class DictationReliabilityTests: XCTestCase {
         XCTAssertEqual(board.string(forType: .string), "keep these words")
     }
 
+    func testBackToBackDictationsGetOneSeparatingSpace() {
+        XCTAssertEqual(DictationPasteService.spaced("Round two.", after: "."), " Round two.")
+        XCTAssertEqual(DictationPasteService.spaced("and more", after: "d"), " and more")
+        XCTAssertEqual(DictationPasteService.spaced("Hello.", after: nil), "Hello.", "Start of field")
+        XCTAssertEqual(DictationPasteService.spaced("Hello.", after: " "), "Hello.")
+        XCTAssertEqual(DictationPasteService.spaced("Hello.", after: "\n"), "Hello.")
+        XCTAssertEqual(DictationPasteService.spaced("note", after: "("), "note")
+        XCTAssertEqual(DictationPasteService.spaced(", then", after: "s"), ", then")
+    }
+
     private var testTarget: DictationPasteTarget {
-        DictationPasteTarget(pid: 1, element: AXUIElementCreateApplication(1), valueDigest: SHA256.hash(data: Data()), selection: nil)
+        DictationPasteTarget(pid: 1, element: nil)
     }
 
     private func renderIfRequested(coordinator: DictationCoordinator, store: DictationStore, name: String) throws {

@@ -30,7 +30,7 @@ final class DictationCoordinator: ObservableObject {
     private var meterTask: Task<Void, Never>?
     private var sessionID: UUID?
     private var finalizationTimeoutTask: Task<Void, Never>?
-    private var pasteTargetTask: Task<DictationPasteTarget?, Never>?
+    private var pasteTargetTask: Task<DictationPasteTarget, Never>?
     private var sessionTargetApp: (bundleID: String, displayName: String)?
     private var sessionTargetPID: pid_t?
     private var sleepObserver: NSObjectProtocol?
@@ -196,7 +196,17 @@ final class DictationCoordinator: ObservableObject {
     /// owned by `DictationLauncher` passes `.askScreen` to fire the
     /// ask-the-screen flow.
     func startSession(mode: DictationMode = .polish) {
-        if case .failed = phase { resetToIdle() }
+        switch phase {
+        case .failed, .done:
+            // Both are result cards, not work in flight. A press during the
+            // done beat used to be swallowed, which put toggle out of step:
+            // the next press started a session and the one after stopped it
+            // with no speech. Cancel the finished session's dwell first.
+            sessionTask?.cancel()
+            resetToIdle()
+        default:
+            break
+        }
         guard !isActive else { return }
         let id = UUID()
         sessionID = id
@@ -348,11 +358,11 @@ final class DictationCoordinator: ObservableObject {
         switch phase {
         case .listening:
             stopSession()
-        case .idle, .failed:
+        case .idle, .failed, .done:
             startSession(mode: mode)
         default:
             // Ignore extra presses while transcribing/pasting — a second tap
-            // must not start a overlapping session or tear down in-flight work.
+            // must not start an overlapping session or tear down in-flight work.
             break
         }
     }
@@ -750,7 +760,7 @@ final class DictationCoordinator: ObservableObject {
         )
         Task { @MainActor [weak self] in
             guard let self, let store = self.store else { return }
-            if settings.learnFromEdits, !self.lastResultWasCopied,
+            if settings.learnFromEdits, !copied,
                let learner = self.correctionLearner,
                settings.autoPasteIntoActiveApp
             {
@@ -775,9 +785,10 @@ final class DictationCoordinator: ObservableObject {
         }
 
         // Hold the done state just long enough to register, then tear down.
-        // Guarded so a cancel/new session that already moved the phase
-        // doesn't get yanked back to idle underneath the user.
-        try? await Task.sleep(for: .seconds((lastResultWasCopied || polishWasSkipped) ? 3 : 0.7))
+        // A copied result stays longer so "Press ⌘V" can be read. Guarded so
+        // a cancel/new session that already moved the phase doesn't get
+        // yanked back to idle underneath the user.
+        try? await Task.sleep(for: .seconds(copied ? 3 : 0.7))
         if !Task.isCancelled, sessionID == id, case .done = phase {
             resetToIdle()
         }

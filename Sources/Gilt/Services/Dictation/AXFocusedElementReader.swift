@@ -43,6 +43,27 @@ enum AXFocusedElementReader {
         return .success(text)
     }
 
+    /// The character just before the caret (or the start of the selection)
+    /// in the focused text field. Nil at the start of the field or when AX
+    /// can't say.
+    static func characterBeforeCaret(pid: pid_t) -> Character? {
+        guard let element = focusedTextElement(pid: pid) else { return nil }
+        var value: CFTypeRef?
+        var selected: CFTypeRef?
+        var range = CFRange()
+        guard AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &value) == .success,
+              let text = value as? String,
+              AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &selected) == .success,
+              let selected, CFGetTypeID(selected) == AXValueGetTypeID(),
+              // swiftlint:disable:next force_cast
+              AXValueGetValue(selected as! AXValue, .cfRange, &range)
+        else { return nil }
+        // AX ranges count UTF-16 units, like NSString.
+        let string = text as NSString
+        guard range.location > 0, range.location <= string.length else { return nil }
+        return string.substring(with: string.rangeOfComposedCharacterSequence(at: range.location - 1)).first
+    }
+
     static func focusedTextElement(pid: pid_t) -> AXUIElement? {
         let appElement = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(appElement, 0.15)

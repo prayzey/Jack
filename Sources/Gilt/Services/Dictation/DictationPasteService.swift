@@ -42,12 +42,15 @@ final class DictationPasteService {
         if let target { mayPaste = await targetIsCurrent(target) }
         else { mayPaste = false }
         guard !Task.isCancelled else { return false }
-        guard mayPaste else {
+        guard mayPaste, let target else {
             Logger(subsystem: AppBrand.logSubsystem, category: "DictationDelivery")
                 .notice("Copied instead of pasting: destinationSnapshotPresent=\(target != nil, privacy: .public)")
             copyOnly(text, saveToHistory: !restorePasteboard)
             return false
         }
+        let pid = target.pid
+        let previous = await Task.detached { AXFocusedElementReader.characterBeforeCaret(pid: pid) }.value
+        let text = Self.spaced(text, after: previous)
 
         let previousItems = restorePasteboard ? snapshotPasteboard(pasteboard) : nil
 
@@ -70,6 +73,17 @@ final class DictationPasteService {
             self.restore(pasteboard: pasteboard, items: previousItems)
         }
         return true
+    }
+
+    /// Back-to-back dictations would otherwise run together ("works.Testing").
+    /// Only a word or sentence end before the caret earns a space, and only
+    /// when the transcript starts with a word, so "(", "/" and "-" joins stay tight.
+    nonisolated static func spaced(_ text: String, after previous: Character?) -> String {
+        guard let previous, let first = text.first,
+              previous.isLetter || previous.isNumber || ".,!?;:)]}\"”’".contains(previous),
+              first.isLetter || first.isNumber
+        else { return text }
+        return " " + text
     }
 
     /// Quietly write `text` to the pasteboard with no Cmd+V — used when

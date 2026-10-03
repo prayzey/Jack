@@ -118,7 +118,7 @@ final class DictationUpgradeTests: XCTestCase {
         defer { board.releaseGlobally() }
         var posts = 0
         let service = DictationPasteService(pasteboard: board, postPaste: { posts += 1; return true }, targetIsCurrent: { _ in false })
-        let target = DictationPasteTarget(pid: 1, element: AXUIElementCreateApplication(1), valueDigest: SHA256.hash(data: Data()), selection: nil)
+        let target = DictationPasteTarget(pid: 1, element: nil)
         let changed = await service.paste(text: "safe draft", target: target)
         let missing = await service.paste(text: "latest draft", target: nil)
         XCTAssertFalse(changed)
