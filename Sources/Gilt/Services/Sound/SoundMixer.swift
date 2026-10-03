@@ -477,8 +477,13 @@ final class SoundMixer: ObservableObject {
     }
 
     private func devicesChanged() {
+        let before = outputDevices
         refreshDevices()
-        // A routed speaker may have just connected or gone away.
+        // Every tap creates and destroys a private aggregate, which fires
+        // this too. Rebuilding on those would rebuild forever (hundreds of
+        // taps a second, crackling the whole Mac), so only a real speaker
+        // connecting or going away counts.
+        guard outputDevices != before else { return }
         rebuildTaps()
     }
 
