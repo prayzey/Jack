@@ -127,7 +127,7 @@ struct RadialClipNode: View {
                 store.selectSingle(item.clipID)
             }
         }
-        .contextMenu {
+        .contextMenu { DeferredView {
             let browserPlan = store.browserActionPlan(primaryID: item.clipID)
             let emailPlan = store.emailActionPlan(primaryID: item.clipID)
 
@@ -170,7 +170,7 @@ struct RadialClipNode: View {
             } label: {
                 Label(item.isPinned ? "Unpin" : "Pin", systemImage: item.isPinned ? "pin.slash" : "pin")
             }
-        }
+        } }
         .help(radialTooltip)
         .onAppear {
             store.fetchLinkMetadataIfNeeded(for: item)

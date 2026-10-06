@@ -110,6 +110,9 @@ struct JackApp: App {
             options.tracesSampleRate = 1.0
             options.enableAppHangTracking = true
             options.appHangTimeoutInterval = 2
+            // Only notarized release builds report as production (see notarize-release.sh),
+            // so local dev runs don't trigger production alerts.
+            options.environment = Bundle.main.object(forInfoDictionaryKey: "JackSentryEnvironment") as? String ?? "development"
             // Tag release so dSYMs can be matched
             if let releaseName = AppVersionInfo.current.sentryReleaseName {
                 options.releaseName = releaseName

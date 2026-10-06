@@ -134,7 +134,7 @@ struct ClipCardView: View {
                 }
             }
         }
-        .contextMenu { clipContextMenu }
+        .contextMenu { DeferredView { clipContextMenu } }
         .onAppear {
             store.fetchLinkMetadataIfNeeded(for: item)
         }

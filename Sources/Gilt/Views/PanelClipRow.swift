@@ -95,7 +95,7 @@ struct PanelClipRow: View {
         .shadow(color: .black.opacity(0.28), radius: 6, y: 3)
         .contentShape(Rectangle())
         .onTapGesture(perform: handleTap)
-        .contextMenu { contextMenu }
+        .contextMenu { DeferredView { contextMenu } }
         .onDrag {
             ClipDragLifecycle.beginWithMouseReleaseRecovery()
             return ClipDragItemProvider.makeProvider(for: item)

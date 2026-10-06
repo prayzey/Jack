@@ -247,6 +247,8 @@ cat > "$CONTENTS/Info.plist" << PLIST
     <string>${CONFIG}</string>
     <key>JackGitRevision</key>
     <string>${COMMIT}</string>
+    <key>JackSentryEnvironment</key>
+    <string>${SENTRY_ENVIRONMENT:-development}</string>
     <key>CFBundleExecutable</key>
     <string>${APP_NAME}</string>
     <key>CFBundlePackageType</key>

@@ -103,11 +103,16 @@ extension ClipboardStore {
 
     /// Recalculate trial state from persisted timestamp, and sync clipboard monitor.
     func evaluateTrialState() {
-        trialState = Self.trialState(
+        let newState = Self.trialState(
             licenseState: licenseState,
             trialStartedAt: LicenseVault.trialStartedAt ?? settings.trialStartedAt,
             now: Date()
         )
+        // @Published fires on every assignment, even an equal value. The 60s refresh
+        // timer calls this, so assigning unconditionally redrew every card once a minute.
+        if newState != trialState {
+            trialState = newState
+        }
         syncMonitorWithAccessState()
     }
 

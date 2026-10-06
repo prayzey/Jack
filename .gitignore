@@ -11,6 +11,7 @@ Gilt.app/
 Jack.app/
 *.dmg
 *.app.zip
+*.dSYM/
 .playwright-cli/
 release_setup.md
 .wrangler/

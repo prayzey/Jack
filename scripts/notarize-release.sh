@@ -29,6 +29,9 @@ if [ "$ARTIFACT_KIND" != "dmg" ] && [ "$ARTIFACT_KIND" != "zip" ]; then
     exit 1
 fi
 
+# Shipped builds report to Sentry as production; build-app.sh defaults to development.
+export SENTRY_ENVIRONMENT=production
+
 echo "=== Preparing release artifacts for ${APP_NAME} ==="
 "$SCRIPT_DIR/build-app.sh" "$CONFIG"
 rm -f "$ZIP_NAME"
@@ -57,6 +60,19 @@ xcrun stapler staple "$APP_DIR"
 if [ "$ARTIFACT_KIND" = "dmg" ]; then
     echo "Stapling ${ARTIFACT_PATH}..."
     xcrun stapler staple "$ARTIFACT_PATH"
+fi
+
+# Upload debug symbols so Sentry can show function names in crash and hang reports.
+# Auth comes from SENTRY_AUTH_TOKEN or ~/.sentryclirc, never from this repo.
+DSYM_PATH="${APP_NAME}.app.dSYM"
+rm -rf "$DSYM_PATH"
+dsymutil ".build/release/Gilt" -o "$DSYM_PATH" 2>/dev/null
+if command -v sentry-cli >/dev/null 2>&1; then
+    echo "Uploading ${DSYM_PATH} to Sentry..."
+    sentry-cli debug-files upload --org "${SENTRY_ORG:-novor}" --project "${SENTRY_PROJECT:-apple-macos}" "$DSYM_PATH" \
+        || echo "WARNING: Sentry dSYM upload failed. Retry: sentry-cli debug-files upload --org novor --project apple-macos ${DSYM_PATH}"
+else
+    echo "WARNING: sentry-cli not installed, skipped dSYM upload. Sentry reports will show raw addresses."
 fi
 
 echo ""

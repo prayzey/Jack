@@ -172,7 +172,7 @@ struct DrawerClipRow: View {
                 }
             }
         }
-        .contextMenu {
+        .contextMenu { DeferredView {
             let hasSelection = !store.selectedClipIDs.isEmpty
             let targetIDs = hasSelection ? store.selectedClipIDs : [item.clipID]
             let targetItems = store.clips.filter { targetIDs.contains($0.clipID) }
@@ -219,7 +219,7 @@ struct DrawerClipRow: View {
             } label: {
                 Label(allPinned ? "Unpin" : "Pin", systemImage: allPinned ? "pin.slash" : "pin")
             }
-        }
+        } }
         .onDrag {
             ClipDragLifecycle.beginWithMouseReleaseRecovery()
             return ClipDragItemProvider.makeProvider(for: item)
