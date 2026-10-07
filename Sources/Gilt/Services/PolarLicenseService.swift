@@ -111,7 +111,7 @@ actor PolarLicenseService {
 
     // MARK: - Helpers
 
-    private func buildRequest<T: Encodable>(path: String, body: T) throws -> URLRequest {
+    func buildRequest<T: Encodable>(path: String, body: T) throws -> URLRequest {
         guard let url = URL(string: PolarConstants.baseURL + path) else {
             throw LicenseError.networkError("Invalid URL")
         }
@@ -119,6 +119,8 @@ actor PolarLicenseService {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        // Keep every license operation on the tested contract when Polar changes its default.
+        request.setValue("2026-10", forHTTPHeaderField: "Polar-Version")
         request.httpBody = try encoder.encode(body)
         return request
     }
