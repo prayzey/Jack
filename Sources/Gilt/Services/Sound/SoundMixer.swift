@@ -695,6 +695,13 @@ final class SoundMixer: ObservableObject {
             if let app = NSRunningApplication(processIdentifier: current), app.activationPolicy == .regular {
                 return app
             }
+            // Apps inside a simulated iPhone are run by CoreSimulator's
+            // helpers, which no app owns, so credit the app showing them.
+            if isCoreSimulatorHelper(current) {
+                return simulatorHostIDs.lazy
+                    .compactMap { NSRunningApplication.runningApplications(withBundleIdentifier: $0).first }
+                    .first
+            }
             let responsible = responsiblePID?(current) ?? -1
             let next = responsible > 1 && responsible != current ? responsible : parentPID(of: current)
             guard next > 1, next != current else { return nil }
@@ -710,6 +717,15 @@ final class SoundMixer: ObservableObject {
         guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "responsibility_get_pid_responsible_for_pid") else { return nil }
         return unsafeBitCast(symbol, to: (@convention(c) (pid_t) -> pid_t).self)
     }()
+
+    /// Device Hub (Xcode 27+), then Simulator for older Xcode.
+    private static let simulatorHostIDs = ["com.apple.dt.Devices", "com.apple.iphonesimulator"]
+
+    private static func isCoreSimulatorHelper(_ pid: pid_t) -> Bool {
+        var path = [CChar](repeating: 0, count: Int(MAXPATHLEN) * 4)
+        guard proc_pidpath(pid, &path, UInt32(path.count)) > 0 else { return false }
+        return String(cString: path).contains("/CoreSimulator.framework/")
+    }
 
     private static func parentPID(of pid: pid_t) -> pid_t {
         var info = kinfo_proc()
