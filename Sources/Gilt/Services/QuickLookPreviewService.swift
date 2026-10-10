@@ -85,6 +85,16 @@ final class QuickLookPreviewService: NSObject, QLPreviewPanelDataSource, QLPrevi
         return true
     }
 
+    /// Close the panel if it is showing, so Space toggles like Finder. Returns true if it closed.
+    func closeIfVisible() -> Bool {
+        guard QLPreviewPanel.sharedPreviewPanelExists(),
+              let panel = QLPreviewPanel.shared(),
+              panel.isVisible
+        else { return false }
+        panel.orderOut(nil)
+        return true
+    }
+
     nonisolated func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int {
         activePayloads.count
     }

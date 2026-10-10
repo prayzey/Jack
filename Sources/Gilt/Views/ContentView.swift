@@ -169,12 +169,6 @@ struct ContentView: View {
             DispatchQueue.main.async { store.navigateSelection(direction: 1) }
             return .handled
         }
-        .onKeyPress(.space) {
-            guard !searchExpanded else { return .ignored }
-            guard store.inlineEditingClipID == nil else { return .ignored }
-            DispatchQueue.main.async { store.openPreviewForSelection() }
-            return .handled
-        }
         .onKeyPress(.return, phases: .down) { keyPress in
             guard !searchExpanded else { return .ignored }
             guard store.inlineEditingClipID == nil else { return .ignored }
@@ -426,6 +420,22 @@ struct ContentView: View {
             guard event.window?.windowNumber == NSApp.keyWindow?.windowNumber,
                   NSApp.keyWindow?.title.contains("Settings") != true else {
                 return event
+            }
+
+            // Space previews the selection (Quick Look), and closes it again like Finder.
+            // Lives here, not in .onKeyPress(.space), for the same focus reason as Delete.
+            if event.keyCode == 49,
+               event.modifierFlags.intersection([.command, .control, .option, .shift]) == [] {
+                if QuickLookPreviewService.shared.closeIfVisible() { return nil }
+                if let responder = event.window?.firstResponder,
+                   responder is NSTextView || responder is NSTextField {
+                    return event
+                }
+                guard store.inlineEditingClipID == nil,
+                      !store.selectedClipIDs.isEmpty || store.previewingClipID != nil
+                else { return event }
+                DispatchQueue.main.async { store.openPreviewForSelection() }
+                return nil
             }
 
             let deleteChar = String(UnicodeScalar(NSDeleteCharacter)!)
