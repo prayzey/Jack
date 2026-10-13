@@ -132,4 +132,47 @@ final class DictationCaptionMotionTests: XCTestCase {
         XCTAssertFalse(hit(20) is PanelPointerArea.PointerView, "The button gets its click")
         XCTAssertTrue(hit(150) is PanelPointerArea.PointerView, "Empty pill area starts a drag")
     }
+
+    /// The real pill, not a stand-in: a press on its words, dots or background
+    /// must reach the drag surface, and a right-click must still find the menu.
+    func testThePillItselfCanBeDraggedAndRightClicked() throws {
+        let suite = "DictationDrag.\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: root)
+        }
+        let store = DictationStore(defaults: defaults, rootURL: root)
+        let coordinator = DictationCoordinator()
+        coordinator.showPreviewState(.listening, transcript: "Hey Sam, can we push the design review", stableWordCount: 5, level: 0.3)
+        let host = NSHostingView(rootView: DictationOverlayView(coordinator: coordinator, store: store, onStop: {}))
+        let size = DictationCaptionLayout.sessionPanelSize
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = host
+        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+        host.layoutSubtreeIfNeeded()
+
+        // The pill sits centered at the bottom of the panel, above the shadow margin.
+        // NSHostingView is flipped, so measure from the top.
+        let fromBottom = DictationCaptionLayout.shadowMargin + DictationCaptionLayout.pillHeight / 2
+        let pillMidY = host.isFlipped ? size.height - fromBottom : fromBottom
+        for x in [size.width / 2 - 120, size.width / 2 - 40, size.width / 2 + 60] {
+            let point = host.convert(NSPoint(x: x, y: pillMidY), to: host.superview)
+            XCTAssertTrue(host.hitTest(point) is PanelPointerArea.PointerView, "A press at x \(x) starts a drag")
+        }
+
+        let center = host.convert(NSPoint(x: size.width / 2, y: pillMidY), to: nil)
+        let rightClick = try XCTUnwrap(NSEvent.mouseEvent(
+            with: .rightMouseDown, location: center, modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1
+        ))
+        var responder: NSResponder? = host.hitTest(host.convert(NSPoint(x: size.width / 2, y: pillMidY), to: host.superview))
+        var menu: NSMenu?
+        while let view = responder as? NSView, menu == nil {
+            menu = view.menu(for: rightClick)
+            responder = view.nextResponder
+        }
+        XCTAssertNotNil(menu, "Right-click still opens the pill's menu")
+    }
 }

@@ -109,10 +109,12 @@ struct DictationOverlayView: View {
             )
             .padding(.leading, DictationCaptionLayout.textLeading)
             .animation(.easeOut(duration: 0.2)) { $0.opacity(isDone ? 0 : 1) }
+            .allowsHitTesting(false)
 
             doneLabel(width: doneLabelWidth(maxWidth: maxWidth))
                 .padding(.leading, DictationCaptionLayout.textLeading)
                 .animation(.easeOut(duration: 0.2)) { $0.opacity(isDone && showsDoneLabel ? 1 : 0) }
+                .allowsHitTesting(false)
 
             DictationDotGrid(
                 mode: gridMode,
@@ -121,6 +123,7 @@ struct DictationOverlayView: View {
                 dimOpacity: palette.isDarkShell ? 0.16 : 0.12
             )
             .padding(.leading, DictationCaptionLayout.gridInset)
+            .allowsHitTesting(false)
 
             controls
                 .frame(maxWidth: .infinity, alignment: .trailing)
@@ -129,9 +132,12 @@ struct DictationOverlayView: View {
                 .allowsHitTesting(showsControls)
         }
         .frame(width: motion.width, height: DictationCaptionLayout.pillHeight, alignment: .leading)
-        .background(surface(Capsule()))
+        // Everything drawn here lets clicks through to the pointer area behind it,
+        // so a press anywhere but the buttons drags the pill. Hit-testable
+        // fills here would swallow the press and the pill could not move.
+        .background(surface(Capsule()).allowsHitTesting(false))
         .clipShape(Capsule())
-        .overlay(Capsule().strokeBorder(borderStyle, lineWidth: 0.5))
+        .overlay(Capsule().strokeBorder(borderStyle, lineWidth: 0.5).allowsHitTesting(false))
         // Hover shows the buttons; press and drag anywhere else moves the pill.
         .background(PanelPointerArea { isHovering = $0 })
         .shadow(color: shadowColor, radius: 16, y: 6)
