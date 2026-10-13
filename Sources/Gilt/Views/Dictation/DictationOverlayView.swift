@@ -13,6 +13,8 @@ struct DictationOverlayView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovering = false
+    /// Paces the words and springs the width, frame by frame. A class so updating it never re-renders the view.
+    @State private var motion = DictationPillMotion()
 
     private var phase: DictationPhase { coordinator.phase }
     private var palette: DictationPillPalette { store.settings.pillTheme.palette }
@@ -67,24 +69,45 @@ struct DictationOverlayView: View {
     // One view for the whole session, so the words, the grid and the width
     // carry through listening, polishing and the finish without a swap.
     private func pill(maxWidth: CGFloat) -> some View {
-        let showsControls = isHovering && phase == .listening
+        TimelineView(.animation(paused: phase == .idle || isFailed)) { timeline in
+            let lineWidth = DictationCaptionLayout.lineWidth(of: words)
+            let showsControls = isHovering && phase == .listening
+            let _ = motion.advance(
+                to: timeline.date,
+                revealTarget: words.isEmpty ? 0 : lineWidth + DictationCaptionRibbon.inkEdge,
+                hurry: isWorking,
+                reduceMotion: reduceMotion
+            ) { revealed in
+                DictationCaptionLayout.pillWidth(
+                    pillContent(maxWidth: maxWidth, shownTextWidth: min(lineWidth, revealed)),
+                    maxWidth: maxWidth,
+                    showsControls: showsControls
+                )
+            }
+            pillBody(maxWidth: maxWidth, showsControls: showsControls)
+        }
+    }
+
+    private func pillBody(maxWidth: CGFloat, showsControls: Bool) -> some View {
         let isDone = phase == .done
-        let width = DictationCaptionLayout.pillWidth(pillContent(maxWidth: maxWidth), maxWidth: maxWidth, showsControls: showsControls)
-        let viewport = DictationCaptionLayout.textViewport(pillWidth: width, showsControls: showsControls)
+        // Words scroll against the width the pill is heading to, so text never
+        // shifts while the pill is still opening; the opening edge only clips the soft fade.
+        let viewport = DictationCaptionLayout.textViewport(pillWidth: motion.targetWidth, showsControls: showsControls)
         return ZStack(alignment: .leading) {
             DictationCaptionRibbon(
                 words: words,
                 stableWordCount: coordinator.liveTranscriptStableWordCount,
                 color: palette.captionText,
                 viewportWidth: viewport,
+                revealedWidth: motion.revealed,
                 isWorking: isWorking
             )
             .padding(.leading, DictationCaptionLayout.textLeading)
-            .opacity(isDone ? 0 : 1)
+            .animation(.easeOut(duration: 0.2)) { $0.opacity(isDone ? 0 : 1) }
 
             doneLabel(width: doneLabelWidth(maxWidth: maxWidth))
                 .padding(.leading, DictationCaptionLayout.textLeading)
-                .opacity(isDone && showsDoneLabel ? 1 : 0)
+                .animation(.easeOut(duration: 0.2)) { $0.opacity(isDone && showsDoneLabel ? 1 : 0) }
 
             DictationDotGrid(
                 mode: gridMode,
@@ -97,31 +120,29 @@ struct DictationOverlayView: View {
             controls
                 .frame(maxWidth: .infinity, alignment: .trailing)
                 .padding(.trailing, DictationCaptionLayout.gridInset)
-                .opacity(showsControls ? 1 : 0)
+                .animation(.easeOut(duration: 0.16)) { $0.opacity(showsControls ? 1 : 0) }
                 .allowsHitTesting(showsControls)
         }
-        .frame(width: width, height: DictationCaptionLayout.pillHeight, alignment: .leading)
+        .frame(width: motion.width, height: DictationCaptionLayout.pillHeight, alignment: .leading)
         .background(surface(Capsule()))
         .clipShape(Capsule())
         .overlay(Capsule().strokeBorder(borderStyle, lineWidth: 0.5))
         .background(PanelHoverTracker { isHovering = $0 })
         .shadow(color: shadowColor, radius: 16, y: 6)
         // Grows out of a small dot when a session starts and tucks back in as the panel fades.
-        .scaleEffect(phase == .idle ? 0.6 : 1)
-        .animation(reduceMotion ? nil : .spring(response: 0.36, dampingFraction: 0.84), value: width)
-        .animation(reduceMotion ? nil : .spring(response: 0.42, dampingFraction: 0.68), value: phase == .idle)
-        .animation(.easeOut(duration: 0.16), value: showsControls)
-        .animation(.easeOut(duration: 0.2), value: isDone)
+        .animation(reduceMotion ? nil : .spring(response: 0.42, dampingFraction: 0.68)) {
+            $0.scaleEffect(phase == .idle ? 0.6 : 1)
+        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(statusLabel)
     }
 
-    private func pillContent(maxWidth: CGFloat) -> DictationCaptionLayout.PillContent {
+    private func pillContent(maxWidth: CGFloat, shownTextWidth: CGFloat) -> DictationCaptionLayout.PillContent {
         switch phase {
         // A copied result is the check alone: a small circle, no words.
         case .done: return showsDoneLabel ? .label(doneLabelWidth(maxWidth: maxWidth)) : .empty
         case .idle, .failed: return .empty
-        default: return words.isEmpty ? .empty : .text(DictationCaptionLayout.lineWidth(of: words))
+        default: return words.isEmpty ? .empty : .text(shownTextWidth)
         }
     }
 

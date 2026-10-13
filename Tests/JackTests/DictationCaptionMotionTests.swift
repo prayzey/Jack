@@ -52,4 +52,40 @@ final class DictationCaptionMotionTests: XCTestCase {
         XCTAssertEqual(loud, 1)
         XCTAssertEqual(quiet, 0)
     }
+
+    func testWordsFlowInAtASteadyPaceInsteadOfInBursts() {
+        let motion = DictationPillMotion()
+        var now = Date()
+        let frame = 1.0 / 60
+        motion.advance(to: now, revealTarget: 0, hurry: false, reduceMotion: false) { _ in 44 }
+        // A three-word burst lands at once; it should spread over several frames, not appear in one.
+        var steps: [CGFloat] = []
+        var last = motion.revealed
+        for _ in 0..<90 {
+            now += frame
+            motion.advance(to: now, revealTarget: 140, hurry: false, reduceMotion: false) { 46 + $0 + 16 }
+            steps.append(motion.revealed - last)
+            last = motion.revealed
+        }
+        XCTAssertLessThan(steps.max() ?? 0, 10, "No single frame jumps more than a few letters")
+        XCTAssertGreaterThan(steps.filter { $0 > 0 }.count, 20, "The burst is spread across many frames")
+        XCTAssertEqual(motion.revealed, 140, "It catches up within a second and a half")
+
+        // Once speech stops it finishes faster.
+        let hurried = DictationPillMotion()
+        var t2 = Date()
+        hurried.advance(to: t2, revealTarget: 0, hurry: true, reduceMotion: false) { _ in 44 }
+        var frames = 0
+        while hurried.revealed < 140, frames < 200 {
+            t2 += frame
+            frames += 1
+            hurried.advance(to: t2, revealTarget: 140, hurry: true, reduceMotion: false) { _ in 44 }
+        }
+        XCTAssertLessThan(frames, 45)
+
+        // A fresh session after a pause starts settled, with nothing left over.
+        motion.advance(to: now + 5, revealTarget: 0, hurry: false, reduceMotion: false) { _ in 44 }
+        XCTAssertEqual(motion.revealed, 0)
+        XCTAssertEqual(motion.width, 44)
+    }
 }
