@@ -57,6 +57,17 @@ enum TranscriptCleaner {
         return String(body)
     }
 
+    /// True when two transcripts say the same words and differ only in
+    /// punctuation, spacing or capitalization.
+    static func sameWords(_ a: String, _ b: String) -> Bool {
+        func words(_ text: String) -> [String] {
+            text.lowercased()
+                .components(separatedBy: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "'")).inverted)
+                .filter { !$0.isEmpty }
+        }
+        return words(a) == words(b)
+    }
+
     // MARK: - Filler removal
 
     /// Strip standalone filler words. The regex matches a word-boundary,

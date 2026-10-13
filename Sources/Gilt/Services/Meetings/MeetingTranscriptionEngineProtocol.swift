@@ -46,9 +46,23 @@ protocol MeetingTranscriptionEngineProtocol: AnyObject {
     /// Streaming with fresh state-per-window erases the prediction network's
     /// context and produces visibly disjointed output.
     func transcribeSamples(_ samples: [Float]) async throws -> String
+
+    /// Keeps the model loaded between dictations so the next one starts warm.
+    func keepWarm()
+
+    /// Releases what `keepWarm` holds, for the idle-unload setting.
+    func releaseWarm()
+
+    /// A slower, more accurate decode of a finished recording, or nil when
+    /// the engine has none or it is not ready in time.
+    func refinedTranscript(from samples: [Float]) async -> String?
 }
 
 extension MeetingTranscriptionEngineProtocol {
+    func keepWarm() {}
+    func releaseWarm() {}
+    func refinedTranscript(from samples: [Float]) async -> String? { nil }
+
     /// Default implementation: no granular progress, just warm up + flip to 100%.
     func prefetch(reportingProgress: @MainActor @Sendable @escaping (Double) -> Void) async throws {
         try await warmUp()

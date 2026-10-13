@@ -16,13 +16,19 @@ import OSLog
 ///
 /// The subprocess boundary is deliberate: it keeps ggml/Metal out of the app
 /// process (a crash there can't take Jack down) and avoids linking C++ into
-/// the SwiftPM build. Each session loads the model in its own helper.
+/// the SwiftPM build. Dictation reuses one long-lived helper that keeps the
+/// model loaded (`TranscribeHelperServer`); a busy server or other callers
+/// fall back to a one-off helper per session.
 @MainActor
 final class TranscribeCppStreamingEngine: MeetingTranscriptionEngineProtocol {
     let engineID: MeetingTranscriptionEngine = .parakeetUnifiedStream
 
     nonisolated static let expectedModelSHA256 = "4b50b6dd862bf6e346929aaf4f5eaacec003bfa3f56462d6c874b41ef2f38795"
+    /// Remembers a verified file across launches, so the 731 MB hash runs
+    /// once per download instead of before the first dictation of every launch.
+    nonisolated static let verifiedModelDefaultsKey = "TranscribeCppVerifiedModel"
     private var verifiedModificationDate: Date?
+    private var server: TranscribeHelperServer?
     private let modelURL: URL
     private let helperExecutableURL: URL?
     private let logger = Logger(subsystem: AppBrand.logSubsystem, category: "TranscribeCppEngine")
@@ -82,12 +88,78 @@ final class TranscribeCppStreamingEngine: MeetingTranscriptionEngineProtocol {
             throw MeetingTranscriptionError.modelMissing(engine: engineID)
         }
         let modified = try modelURL.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
-        guard modified != verifiedModificationDate || verifiedModificationDate == nil else { return }
-        let url = modelURL
-        let check = Task.detached(priority: .userInitiated) { try Self.modelIntegrityMatches(at: url) }
-        let valid = try await withTaskCancellationHandler { try await check.value } onCancel: { check.cancel() }
-        guard valid else { throw MeetingTranscriptionError.modelDownloadFailed(engine: engineID) }
-        verifiedModificationDate = modified
+        if modified == nil || modified != verifiedModificationDate {
+            let fingerprint = Self.fingerprint(size: Self.fileSize(at: modelURL), modified: modified)
+            if UserDefaults.standard.string(forKey: Self.verifiedModelDefaultsKey) != fingerprint {
+                let url = modelURL
+                let check = Task.detached(priority: .userInitiated) { try Self.modelIntegrityMatches(at: url) }
+                let valid = try await withTaskCancellationHandler { try await check.value } onCancel: { check.cancel() }
+                guard valid else { throw MeetingTranscriptionError.modelDownloadFailed(engine: engineID) }
+                UserDefaults.standard.set(fingerprint, forKey: Self.verifiedModelDefaultsKey)
+            }
+            verifiedModificationDate = modified
+        }
+        // Warm means loaded: wait for the dictation helper, so anything that
+        // waits on warmUp (like the polish model) starts after speech is ready.
+        // Audio keeps buffering meanwhile, so nothing said is lost.
+        try await warmServer()?.waitUntilReady()
+    }
+
+    nonisolated static func fingerprint(size: Int64, modified: Date?) -> String {
+        "\(size)|\(modified?.timeIntervalSinceReferenceDate ?? 0)|\(expectedModelSHA256)"
+    }
+
+    // MARK: - Warm helper
+
+    /// The long-lived dictation helper, created on first use.
+    private func warmServer() -> TranscribeHelperServer? {
+        if let server { return server }
+        guard Self.modelFileIsValid(at: modelURL), let helperPath = helperExecutableURL?.path else { return nil }
+        let created = TranscribeHelperServer(helperPath: helperPath, modelPath: modelURL.path)
+        server = created
+        return created
+    }
+
+    func keepWarm() {
+        guard let server = warmServer() else { return }
+        Task.detached(priority: .utility) {
+            try? await server.waitUntilReady()
+            // Build the full-recording decode once now: the first one takes
+            // about 1.7 s, later ones about 0.1 s.
+            _ = await Self.decodeOffline(on: server, samples: [Float](repeating: 0, count: 16_000), timeout: .seconds(15))
+        }
+    }
+
+    func releaseWarm() {
+        server?.shutDown()
+        server = nil
+    }
+
+    /// Full-context decode of the whole recording: on test speech it cut word
+    /// errors about threefold against the low-latency live stream, in about
+    /// 0.1 s once warm. Nil when the helper is not up or takes too long.
+    func refinedTranscript(from samples: [Float]) async -> String? {
+        guard let server, server.isRunning, !samples.isEmpty else { return nil }
+        return await Self.decodeOffline(on: server, samples: samples, timeout: .seconds(3))
+    }
+
+    nonisolated private static func decodeOffline(
+        on server: TranscribeHelperServer, samples: [Float], timeout: Duration
+    ) async -> String? {
+        let (replies, feed) = AsyncStream<TranscribeHelperServer.Reply>.makeStream()
+        guard let id = server.openSession(onReply: { feed.yield($0) }) else { return nil }
+        defer { server.closeSession(id) }
+        let deadline = Task { try? await Task.sleep(for: timeout); feed.finish() }
+        defer { deadline.cancel() }
+        server.send(.run, session: id, samples: samples)
+        for await reply in replies {
+            switch reply {
+            case .offline(let text): return text.trimmingCharacters(in: .whitespacesAndNewlines)
+            case .failed, .cancelled: return nil
+            case .partial, .final: continue
+            }
+        }
+        return nil
     }
 
     // MARK: - Download
@@ -184,10 +256,22 @@ final class TranscribeCppStreamingEngine: MeetingTranscriptionEngineProtocol {
         let engine = engineID
         let engineRaw = engineID.rawValue
         let input = TranscribeAudioStream(buffers: audio)
+        let server = warmServer()
 
         return AsyncThrowingStream { continuation in
             let task = Task.detached(priority: .userInitiated) {
                 guard !Task.isCancelled else { continuation.finish(); return }
+                do {
+                    if let server, try await Self.stream(input, through: server, into: continuation, engineRaw: engineRaw) {
+                        continuation.finish()
+                        return
+                    }
+                } catch {
+                    Logger(subsystem: AppBrand.logSubsystem, category: "TranscribeCppEngine")
+                        .error("Warm streaming session failed: \(error.localizedDescription)")
+                    continuation.finish(throwing: error)
+                    return
+                }
                 guard let helperPath else {
                     // No helper on disk — finish with a real error so the
                     // consumer shows "model not downloaded" instead of a
@@ -252,6 +336,79 @@ final class TranscribeCppStreamingEngine: MeetingTranscriptionEngineProtocol {
             }
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+
+    /// Runs one dictation through the warm helper. Returns false, without
+    /// touching the audio, when another session holds it.
+    nonisolated private static func stream(
+        _ input: TranscribeAudioStream,
+        through server: TranscribeHelperServer,
+        into continuation: AsyncThrowingStream<MeetingTranscriptChunk, Error>.Continuation,
+        engineRaw: String
+    ) async throws -> Bool {
+        let (replies, feed) = AsyncStream<TranscribeHelperServer.Reply>.makeStream()
+        guard let id = server.openSession(onReply: { feed.yield($0) }) else { return false }
+        defer {
+            feed.finish()
+            server.closeSession(id)
+        }
+        // Audio keeps buffering in the capture stream while a cold helper loads.
+        try await server.waitUntilReady()
+        var tuple = Data()
+        for value in [Int32(160), Int32(160)] {
+            withUnsafeBytes(of: value.littleEndian) { tuple.append(contentsOf: $0) }
+        }
+        server.send(.begin, session: id, payload: tuple)
+
+        let reader = Task {
+            do {
+                for await reply in replies {
+                    switch reply {
+                    case .partial(let update):
+                        continuation.yield(MeetingTranscriptChunk(
+                            startTimeSeconds: 0, endTimeSeconds: 0, text: update.text,
+                            engineRaw: engineRaw, streamingUpdate: update
+                        ))
+                    case .final(let text):
+                        // An empty final update must replace an earlier guess, too.
+                        let update = StreamingTranscriptUpdate(committed: text, isFinal: true)
+                        continuation.yield(MeetingTranscriptChunk(
+                            startTimeSeconds: 0, endTimeSeconds: 0, text: update.text,
+                            engineRaw: engineRaw, streamingUpdate: update
+                        ))
+                        return
+                    case .cancelled:
+                        throw CancellationError()
+                    case .failed:
+                        throw MeetingTranscriptionError.transcriptionFailed
+                    case .offline:
+                        continue
+                    }
+                }
+                try Task.checkCancellation()
+                throw MeetingTranscriptionError.transcriptionFailed
+            } catch {
+                // Fail while the microphone is still open; don't wait for
+                // another key release to discover a dead helper.
+                continuation.finish(throwing: error)
+                throw error
+            }
+        }
+        try await withTaskCancellationHandler {
+            for await buffer in input.buffers {
+                try Task.checkCancellation()
+                let samples = WhisperTranscriptionEngine.extractMonoSamples(from: buffer)
+                guard !samples.isEmpty else { continue }
+                server.send(.audio, session: id, samples: samples)
+            }
+            server.send(.finish, session: id)
+            try await reader.value
+        } onCancel: {
+            server.send(.cancel, session: id)
+            reader.cancel()
+            feed.finish()
+        }
+        return true
     }
 
     /// One-shot decode: pipe the whole buffer through a fresh helper session.

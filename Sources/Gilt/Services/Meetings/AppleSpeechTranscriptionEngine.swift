@@ -75,7 +75,14 @@ final class AppleSpeechTranscriptionEngine: MeetingTranscriptionEngineProtocol {
                 do {
                     try await warmUp()
                     let module = try await makeModule()
-                    let analyzer = SpeechAnalyzer(modules: [module])
+                    // User-initiated so speech keeps pace while the polish model
+                    // loads; lingering keeps the model warm between quick dictations.
+                    let analyzer = SpeechAnalyzer(
+                        modules: [module],
+                        options: .init(priority: .userInitiated, modelRetention: .lingering)
+                    )
+                    // On test speech these hints did not change SpeechTranscriber's
+                    // output; custom words are enforced after recognition instead.
                     if !hints.isEmpty {
                         let context = AnalysisContext()
                         context.contextualStrings[.general] = hints

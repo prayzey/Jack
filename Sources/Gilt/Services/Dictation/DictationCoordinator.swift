@@ -92,6 +92,10 @@ final class DictationCoordinator: ObservableObject {
     /// path uses). Cheap to instantiate — stateless aside from its logger.
     private let askScreenReader = ScreenContextReader()
     private let logger = Logger(subsystem: AppBrand.logSubsystem, category: "DictationCoordinator")
+    /// Milestones of each session in ms from key press, kept at notice level
+    /// so a slow start can be read back with `log show` after the fact.
+    private let timing = Logger(subsystem: AppBrand.logSubsystem, category: "DictationTiming")
+    private var sawFirstWords = false
     private weak var store: DictationStore?
     private weak var statsStore: TranscriptionStatsStore?
     /// Optional — attached by `ClipboardStore` after init. When present and
@@ -180,6 +184,30 @@ final class DictationCoordinator: ObservableObject {
 
     func attach(store: DictationStore) {
         self.store = store
+        prewarmSpeechEngine()
+    }
+
+    /// Loads the speech model shortly after launch, so the first dictation
+    /// does not pay the cold load (about 10 s for the English model) while
+    /// the user is already talking. The idle-unload setting still applies.
+    private func prewarmSpeechEngine() {
+        guard let settings = store?.settings, settings.isEnabled, settings.engineIdleUnload != .immediately else { return }
+        Task { [weak self] in
+            // Let launch settle first; this is not on anyone's critical path.
+            try? await Task.sleep(for: .seconds(3))
+            guard let self, !self.isActive else { return }
+            let engine = self.ensureEngine(for: MeetingTranscriptionEngine.normalizedDictationEngine(settings.speechEngine))
+            guard engine.isReady else { return }
+            engine.keepWarm()
+            self.touchActivity()
+            self.startIdleWatcherIfNeeded()
+        }
+    }
+
+    private func mark(_ milestone: StaticString) {
+        guard let start = sessionStartedAt else { return }
+        let elapsed = Int(Date().timeIntervalSince(start) * 1000)
+        timing.notice("\(milestone, privacy: .public) at \(elapsed) ms")
     }
 
     /// Attached separately from `attach(store:)` because the stats store is
@@ -344,6 +372,7 @@ final class DictationCoordinator: ObservableObject {
         // will propagate through the engine's transcribeStream and let the
         // final chunk land before we move on to polish/paste.
         phase = .transcribing
+        mark("stop pressed")
         let id = sessionID
         finalizationTimeoutTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(15))
@@ -409,6 +438,7 @@ final class DictationCoordinator: ObservableObject {
 
         try Task.checkCancellation()
         isPreparing = false
+        mark("microphone on")
         meterTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 80_000_000)
@@ -451,6 +481,7 @@ final class DictationCoordinator: ObservableObject {
         }
 
         try await engine.warmUp()
+        mark("speech engine ready")
 
         if Task.isCancelled { return }
 
@@ -500,9 +531,14 @@ final class DictationCoordinator: ObservableObject {
             meetingStartedAt: startedAt
         )
         var previousWindowText = ""
+        sawFirstWords = false
         for try await chunk in chunkStream {
             if Task.isCancelled { return }
             let windowText = chunk.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !sawFirstWords, !windowText.isEmpty {
+                sawFirstWords = true
+                mark("first words")
+            }
             if let update = chunk.streamingUpdate {
                 liveAccumulated = update.text
                 currentLiveRaw = update.text
@@ -552,9 +588,19 @@ final class DictationCoordinator: ObservableObject {
         if speechEngine.supportsNativeStreaming {
             // The streaming decode IS the canonical transcript for the
             // unified model — the final chunk already drained the
-            // decoder's right context. A second full decode would only
-            // add latency between key release and paste.
-            oneShotRawFromEngine = liveFallback
+            // decoder's right context. On top of it, an engine may offer a
+            // full-context pass over the whole recording: on test speech it
+            // cut word errors about threefold for about 0.1 s. When only
+            // punctuation or case differ, the live text stays, so a live
+            // polish that already covered it can still be reused.
+            mark("live transcript final")
+            if let refined = await engine.refinedTranscript(from: collected), !refined.isEmpty,
+               !TranscriptCleaner.sameWords(refined, liveFallback) {
+                oneShotRawFromEngine = refined
+                mark("full-recording pass changed words")
+            } else {
+                oneShotRawFromEngine = liveFallback
+            }
         } else if !settings.postProcessEnabled {
             let live = liveAccumulated.trimmingCharacters(in: .whitespacesAndNewlines)
             if !live.isEmpty {
@@ -769,6 +815,7 @@ final class DictationCoordinator: ObservableObject {
         // user has both auto-paste and history off, copyOnly() at least lets
         // them Cmd+V manually.
         phase = .pasting
+        mark("polish done")
         let copied: Bool
         if settings.autoPasteIntoActiveApp {
             copied = await !paste.paste(
@@ -784,6 +831,7 @@ final class DictationCoordinator: ObservableObject {
         lastResultWasCopied = copied
 
         lastResult = finalText
+        mark("delivered")
         // Brief "Pasted" beat in the overlay before teardown. Duration must
         // be read before resetToIdle() nils sessionStartedAt — the old
         // reset-first order recorded every dictation as 0 seconds.
@@ -1322,6 +1370,9 @@ final class DictationCoordinator: ObservableObject {
     /// backend cleanly. Safe to call when nothing is loaded.
     private func unloadEngines() {
         if engine != nil {
+            // The transcription service caches the engine, so dropping our
+            // reference alone would not free a warm model.
+            engine?.releaseWarm()
             engine = nil
             engineID = nil
         }
