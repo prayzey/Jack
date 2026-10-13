@@ -90,6 +90,19 @@ final class AudioInputDeviceManager: ObservableObject {
         let defaultID = Self.defaultInputDeviceID()
         let defaultName: String? = defaultID.flatMap { Self.deviceName(forID: $0) }
 
+        availableDevices = Self.inputDevices(defaultUID: defaultID.flatMap { Self.deviceUID(forID: $0) })
+            .sorted { lhs, rhs in
+                if lhs.isSystemDefault != rhs.isSystemDefault { return lhs.isSystemDefault }
+                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            }
+        systemDefaultDeviceName = defaultName
+    }
+
+    /// Enumerates real input devices with their transport types. `nonisolated`
+    /// so dictation can call it inside its off-main engine build, where a
+    /// stalled coreaudiod counts against the build timeout instead of
+    /// freezing the UI.
+    nonisolated static func inputDevices(defaultUID: String? = nil) -> [AudioInputDevice] {
         let session = AVCaptureDevice.DiscoverySession(
             deviceTypes: macosInputDeviceTypes(),
             mediaType: .audio,
@@ -108,7 +121,7 @@ final class AudioInputDeviceManager: ObservableObject {
                 name: dev.localizedName,
                 manufacturer: dev.manufacturer,
                 transportType: transport,
-                isSystemDefault: uid == (defaultID.flatMap { Self.deviceUID(forID: $0) } ?? "")
+                isSystemDefault: uid == (defaultUID ?? "")
             )
         }
 
@@ -116,13 +129,31 @@ final class AudioInputDeviceManager: ObservableObject {
         // list (Microsoft Teams Audio, ZoomAudioDevice, BlackHole, Loopback)
         // but aren't real mics — selecting one produces silence for dictation.
         // Aggregate devices stay visible (legit user-built multi-mic rigs).
-        availableDevices = collected
-            .filter { !$0.isVirtual }
-            .sorted { lhs, rhs in
-                if lhs.isSystemDefault != rhs.isSystemDefault { return lhs.isSystemDefault }
-                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
-            }
-        systemDefaultDeviceName = defaultName
+        return collected.filter { !$0.isVirtual }
+    }
+
+    /// Picks the mic dictation should bind. Returns `nil` to follow the
+    /// system default.
+    ///
+    /// A mic the user picked always wins. Otherwise, when the default input
+    /// is Bluetooth (AirPods and similar), macOS drops the headset into its
+    /// low-quality call mode as soon as we open its mic, which hurts
+    /// recognition and muddies whatever the user is listening to. In that
+    /// case we use the Mac's built-in mic when there is one.
+    /// `availableDevices` is only evaluated in that case, because
+    /// enumerating devices costs a coreaudiod round trip on every session.
+    nonisolated static func dictationInputUID(
+        preferredUID: String?,
+        defaultTransport: UInt32?,
+        availableDevices: @autoclosure () -> [AudioInputDevice],
+        preferBuiltInOverBluetooth: Bool
+    ) -> String? {
+        if let preferredUID, !preferredUID.isEmpty { return preferredUID }
+        guard preferBuiltInOverBluetooth,
+              defaultTransport == kAudioDeviceTransportTypeBluetooth
+                || defaultTransport == kAudioDeviceTransportTypeBluetoothLE
+        else { return nil }
+        return availableDevices().first { $0.transportType == kAudioDeviceTransportTypeBuiltIn }?.uid
     }
 
     /// Look up a device by UID in the current `availableDevices`.
@@ -396,7 +427,7 @@ final class AudioInputDeviceManager: ObservableObject {
     /// We always include `.microphone`; on macOS 14+ we also include
     /// `.external` to catch USB/Thunderbolt audio interfaces that don't
     /// register as a "microphone" subtype.
-    private func macosInputDeviceTypes() -> [AVCaptureDevice.DeviceType] {
+    nonisolated private static func macosInputDeviceTypes() -> [AVCaptureDevice.DeviceType] {
         var types: [AVCaptureDevice.DeviceType] = [.microphone]
         if #available(macOS 14, *) {
             types.append(.external)

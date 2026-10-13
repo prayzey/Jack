@@ -499,7 +499,13 @@ struct DictationSettings: Codable, Equatable {
     var capitalizeSentences: Bool = true
     /// Optional preferred mic device unique ID (nil = system default).
     var preferredMicDeviceUID: String?
-    /// Input gain multiplier applied to mic audio.
+    /// When following the system default and that default is a Bluetooth
+    /// headset, record from the Mac's built-in mic instead. Opening an
+    /// AirPods mic switches the headset into its low-quality call mode for
+    /// both input and output. On by default.
+    var preferBuiltInMicOverBluetooth: Bool = true
+    /// Input gain the user picked in Settings. `nil` means they never moved
+    /// the slider, and Jack leaves the device's own volume alone.
     ///
     /// Dual-mode by design — semantics depend on whether the currently-bound
     /// device exposes settable hardware volume (see
@@ -507,7 +513,8 @@ struct DictationSettings: Codable, Equatable {
     ///
     /// - **Hardware-settable device** (most USB mics, audio interfaces):
     ///   `0...1` drives `kAudioHardwareServiceDeviceProperty_VirtualMainVolume`
-    ///   directly — same value System Settings would set. Default `1.0`.
+    ///   directly, the same value System Settings would set. Capture restores
+    ///   the device's previous volume when it stops.
     /// - **Hardware-NOT-settable device** (built-in MacBook mic on Apple
     ///   silicon, AirPods, most Bluetooth mics): `1...2` is a software
     ///   multiplier applied in the tap. `1.0` = unmodified, `2.0` = +6 dB.
@@ -517,7 +524,7 @@ struct DictationSettings: Codable, Equatable {
     /// The UI flips between these two ranges based on the bound device's
     /// mode and labels the slider so the user knows which one they're
     /// touching.
-    var inputGain: Float = 1.0
+    var inputGain: Float?
 
     // MARK: - Screen context
 
@@ -662,14 +669,20 @@ extension DictationSettings {
         case packTermAdditions, packTermRemovals
         case formatLists, formatParagraphs, formatPunctuationCommands
         case useSmartTypography, capitalizeSentences
-        case preferredMicDeviceUID
-        case inputGain
+        case preferredMicDeviceUID, preferBuiltInMicOverBluetooth
+        // New key on purpose: see the legacy migration in `init(from:)`.
+        case inputGain = "userInputGain"
         case useScreenContext, screenContextMode, screenContextMaxTerms
         case screenContextExcludedBundleIDs, screenContextAXMinimumChars
         case speechEngine, engineIdleUnload
         case askScreenEnabled, askScreenShortcut
         case learnFromEdits
         case voiceActionsEnabled, voiceActionsShortcut, voiceActionConnectors
+    }
+
+    /// Keys older builds wrote that are now only read for migration.
+    private enum LegacyCodingKeys: String, CodingKey {
+        case inputGain
     }
 
     init(from decoder: Decoder) throws {
@@ -715,7 +728,14 @@ extension DictationSettings {
         self.useSmartTypography = try c.decodeIfPresent(Bool.self, forKey: .useSmartTypography) ?? true
         self.capitalizeSentences = try c.decodeIfPresent(Bool.self, forKey: .capitalizeSentences) ?? true
         self.preferredMicDeviceUID = try c.decodeIfPresent(String.self, forKey: .preferredMicDeviceUID)
-        self.inputGain = try c.decodeIfPresent(Float.self, forKey: .inputGain) ?? 1.0
+        self.preferBuiltInMicOverBluetooth = try c.decodeIfPresent(Bool.self, forKey: .preferBuiltInMicOverBluetooth) ?? true
+        // Older builds saved `inputGain: 1.0` for every user, so that key can't
+        // tell "picked 100%" from "never touched the slider". Treat only a
+        // moved slider (any other value) as a choice; everyone else gets the
+        // hands-off default instead of Jack forcing their mic to full volume.
+        let legacyGain = try decoder.container(keyedBy: LegacyCodingKeys.self)
+            .decodeIfPresent(Float.self, forKey: .inputGain)
+        self.inputGain = try c.decodeIfPresent(Float.self, forKey: .inputGain) ?? (legacyGain == 1 ? nil : legacyGain)
         self.useScreenContext = try c.decodeIfPresent(Bool.self, forKey: .useScreenContext) ?? false
         self.screenContextMode = try c.decodeIfPresent(ScreenContextMode.self, forKey: .screenContextMode) ?? .accessibilityWithOCRFallback
         self.screenContextMaxTerms = try c.decodeIfPresent(Int.self, forKey: .screenContextMaxTerms) ?? 60
