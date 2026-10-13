@@ -50,6 +50,18 @@ final class QwenLocalLLM {
 
     var isLoaded: Bool { bot != nil && !unloadAfterGeneration }
 
+    /// Waits a bounded time for a disk-to-memory load already under way.
+    /// Returns whether the model is loaded; never starts a load or a download.
+    func waitForLoadInProgress(timeout: Duration) async -> Bool {
+        // Polls instead of awaiting the load task: awaiting its value cannot
+        // be cut short, so a timeout would not hold.
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while !isLoaded, loadingTask != nil, !isDownloadingFile, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        return isLoaded
+    }
+
     nonisolated static func cachedModelURL(in cacheDirectory: URL) -> URL {
         cacheDirectory.appendingPathComponent(modelFileName)
     }

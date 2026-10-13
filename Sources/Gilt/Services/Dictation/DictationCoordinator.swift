@@ -1094,10 +1094,16 @@ final class DictationCoordinator: ObservableObject {
             && (currentMode == .polish || currentMode == .compose)
         switch settings.livePolishEngine {
         case .automatic:
-            if Self.hasLivePolishMemoryHeadroom {
+            // Prefer Qwen only when it is on this Mac. Picking it while the
+            // download is missing skipped polish on every dictation even
+            // though Apple Intelligence was available.
+            let qwenDownloaded = store.map { QwenLocalLLM.cachedModelExists(in: $0.qwenCacheURL) } ?? false
+            if Self.hasLivePolishMemoryHeadroom, qwenDownloaded {
                 livePolishProvider = .qwen
             } else if AppleIntelligencePolisher.isAvailable {
                 livePolishProvider = .appleIntelligence
+            } else if Self.hasLivePolishMemoryHeadroom {
+                livePolishProvider = .qwen
             }
         case .qwen:
             // Explicit user override — honored even on 8 GB Macs, where the

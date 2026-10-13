@@ -47,7 +47,10 @@ final class DictationStyleEngine {
 
         // Warm in the background; a cold multi-second load must not hold up
         // delivery. Subsequent live passes use it once it is ready.
-        guard llm.isLoaded else {
+        // A load already under way usually lands within a few seconds; waiting
+        // briefly beats pasting unpolished text. Never wait on a download.
+        let loaded = llm.isLoaded ? true : await llm.waitForLoadInProgress(timeout: .seconds(3))
+        guard loaded else {
             Task { try? await llm.ensureLoadedFromCache(cacheDirectory: cacheDirectory) }
             onFallback?()
             return trimmed
