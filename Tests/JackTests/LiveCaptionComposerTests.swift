@@ -33,4 +33,18 @@ final class LiveCaptionComposerTests: XCTestCase {
         XCTAssertEqual(parts.stable, "one two")
         XCTAssertEqual(parts.provisional, "three")
     }
+
+    @MainActor
+    func testPolishVocabularyPutsStrongCustomTermsFirst() {
+        var settings = DictationSettings()
+        settings.customVocabulary = [
+            .init(text: "Normalish", strength: .normal),
+            .init(text: "Parked", strength: .off),
+            .init(text: "Adesokan", strength: .strong)
+        ]
+        XCTAssertEqual(
+            LiveCaptionComposer.polishVocabulary(settings: settings, correctionStore: nil),
+            ["Adesokan", "Normalish"]
+        )
+    }
 }

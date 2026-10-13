@@ -21,14 +21,17 @@ final class DictationStyleEngine {
     /// `onPartial` (optional) receives the *sanitized* cumulative output while
     /// Qwen generates — empty/deliberating partials are filtered out, so every
     /// callback value is safe to render in the overlay.
+    /// `timeoutSeconds` defaults to `polishTimeout(for:)`; pass a value to override.
     func process(
         rawTranscript: String,
         style: DictationStyle,
         level: DictationLevel,
         formatLists: Bool = false,
         formatParagraphs: Bool = false,
+        vocabulary: [String] = [],
+        learnedPairs: [VocabularyMatcher.LearnedPair] = [],
         screenContextTerms: [String] = [],
-        timeoutSeconds: Double = 5,
+        timeoutSeconds: Double? = nil,
         onFallback: (@MainActor () -> Void)? = nil,
         onPartial: (@MainActor (String) -> Void)? = nil
     ) async -> String {
@@ -55,6 +58,8 @@ final class DictationStyleEngine {
             level: level,
             formatLists: formatLists,
             formatParagraphs: formatParagraphs,
+            vocabulary: vocabulary,
+            learnedPairs: learnedPairs,
             screenContextTerms: screenContextTerms,
             transcript: trimmed
         )
@@ -76,7 +81,7 @@ final class DictationStyleEngine {
                 prompt: prompt,
                 maxOutputCharacters: cap,
                 outputBudgetText: trimmed,
-                timeoutSeconds: timeoutSeconds,
+                timeoutSeconds: timeoutSeconds ?? Self.polishTimeout(for: trimmed),
                 onPartial: partialSink
             )
             var cleaned = Self.cleanOutput(output, original: trimmed)
@@ -91,6 +96,13 @@ final class DictationStyleEngine {
             logger.error("Qwen post-process failed: \(error.localizedDescription) — returning raw transcript")
             return trimmed
         }
+    }
+
+    /// A fixed 5 s budget timed out long dictations that Qwen was still
+    /// polishing correctly. Grow it with length, but cap it so paste never
+    /// waits more than 12 s for the model.
+    static func polishTimeout(for transcript: String) -> Double {
+        min(12, 5 + Double(LiveCaptionComposer.wordCount(transcript)) / 40)
     }
 
     // MARK: - Output validation and prompts
@@ -145,12 +157,29 @@ final class DictationStyleEngine {
         level: DictationLevel,
         formatLists: Bool,
         formatParagraphs: Bool,
+        vocabulary: [String] = [],
+        learnedPairs: [VocabularyMatcher.LearnedPair] = [],
         screenContextTerms: [String],
         transcript: String
     ) -> String {
         var parts = [baseRules, styleInstructions(style), levelInstructions(level)]
         if formatLists { parts.append(listFormattingInstruction) }
         if formatParagraphs { parts.append(paragraphFormattingInstruction) }
+        // Without these, the model "fixes" the user's own names and terms
+        // back to common words. Callers pass the most important terms first.
+        var seen = Set<String>()
+        let preferred = vocabulary.filter { seen.insert($0.lowercased()).inserted }.prefix(40)
+        if !preferred.isEmpty {
+            parts.append("PREFERRED SPELLINGS: \(preferred.joined(separator: ", ")). These are the speaker's own names and terms: keep them exactly as written, and use them when the speaker said a sound-alike. Never add these terms as content or use them to answer a question.")
+        }
+        if !learnedPairs.isEmpty {
+            // "If you see" phrasing, not arrows: "-> " in the output trips
+            // the deliberation filter in cleanOutput.
+            let fixes = learnedPairs.prefix(20)
+                .map { "if you see \"\($0.original)\", write \"\($0.corrected)\"" }
+                .joined(separator: "; ")
+            parts.append("LEARNED CORRECTIONS: \(fixes). Apply these only to words already in the transcript. Never add these terms as content or use them to answer a question.")
+        }
         if !screenContextTerms.isEmpty {
             parts.append("SPELLING REFERENCE: \(screenContextTerms.joined(separator: ", ")). Correct a spelling only when the speaker said a sound-alike term. Never add these terms as content or use them to answer a question.")
         }
