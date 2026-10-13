@@ -157,12 +157,12 @@ final class DictationReliabilityTests: XCTestCase {
         guard ProcessInfo.processInfo.environment["JACK_DICTATION_SNAPSHOTS"] != nil else { return }
         let text = "Hey Sam, can we push the design review to Thursday afternoon? I want to walk through the new dictation pill and get your notes before we ship it on Monday."
         let states: [(String, DictationPhase, String, Int, Double, Bool, Bool)] = [
-            ("1-listening-empty", .listening, "", 0, 0.3, false, false),
-            ("2-listening-one-line", .listening, "Hey Sam, can we push the design", 5, 0.5, false, false),
-            ("3-listening-long", .listening, text, 26, 0.6, false, false),
+            ("1-waiting", .listening, "", 0, 0.03, false, false),
+            ("2-speaking", .listening, "Hey Sam, can we push the design", 5, 0.5, false, false),
+            ("3-long", .listening, text, 26, 0.6, false, false),
             ("4-polishing", .rewriting, text, 29, 0, false, false),
-            ("5-done-pasted", .done, text, 29, 0, false, false),
-            ("6-done-copied", .done, text, 29, 0, true, true),
+            ("5-pasted", .done, text, 29, 0, false, false),
+            ("6-copied", .done, text, 29, 0, true, true),
         ]
         for theme in [DictationPillTheme.aurora, .onyx] {
             let suite = "DictationSnapshots.\(UUID())"
@@ -189,7 +189,9 @@ final class DictationReliabilityTests: XCTestCase {
 
     private func renderIfRequested(coordinator: DictationCoordinator, store: DictationStore, name: String) throws {
         guard let directory = ProcessInfo.processInfo.environment["JACK_DICTATION_SNAPSHOTS"] else { return }
-        let host = NSHostingView(rootView: DictationOverlayView(coordinator: coordinator, store: store, onStop: coordinator.stopSession))
+        // Offscreen views get no display frames, so draw the settled state without animating.
+        let host = NSHostingView(rootView: DictationOverlayView(coordinator: coordinator, store: store, onStop: coordinator.stopSession)
+            .transaction { $0.animation = nil })
         host.frame = NSRect(origin: .zero, size: DictationCaptionLayout.sessionPanelSize)
         host.layoutSubtreeIfNeeded()
         // Let the caption measure its text and settle before drawing.

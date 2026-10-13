@@ -22,16 +22,34 @@ final class DictationCaptionMotionTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(DictationSettings.self, from: Data("{}".utf8)).captionWidth, 360)
     }
 
-    func testConfirmationPreservesParagraphsSpacingAndUnicode() throws {
-        for text in ["", "Send  $50 to José.\n\nKeep invoice A-42.", "你好 世界 — مرحباً بالعالم", "microphone"] {
-            for confirmed in [-1, 0, 1, 3, 100] {
-                let styled = DictationWritingCaptionView.styledText(text, stableWordCount: confirmed, color: .white)
-                XCTAssertEqual(String(styled.characters), text)
-            }
+    func testPillHugsItsWordsAndStopsAtItsMaxWidth() {
+        typealias L = DictationCaptionLayout
+        XCTAssertEqual(L.pillWidth(.empty, maxWidth: 360, showsControls: false), L.pillHeight, "Waiting is a circle")
+        XCTAssertEqual(L.pillWidth(.text(100.2), maxWidth: 360, showsControls: false), L.textLeading + 101 + L.textTrailing)
+        XCTAssertEqual(L.pillWidth(.text(1_000), maxWidth: 360, showsControls: false), 360)
+        // A full pill keeps its width when the buttons appear; the words make room instead.
+        XCTAssertEqual(L.pillWidth(.text(1_000), maxWidth: 360, showsControls: true), 360)
+        XCTAssertEqual(L.textViewport(pillWidth: 360, showsControls: true), 360 - L.textLeading - L.controlsTrailing)
+        XCTAssertGreaterThan(L.pillWidth(.empty, maxWidth: 360, showsControls: true), L.pillHeight)
+        // Every visible word fits: the viewport is never narrower than short text.
+        let short = L.pillWidth(.text(80.4), maxWidth: 360, showsControls: false)
+        XCTAssertGreaterThanOrEqual(L.textViewport(pillWidth: short, showsControls: false), 80.4)
+    }
+
+    func testDotGridIsRoundAndDrawsACheckWhenDone() {
+        XCTAssertEqual(DotGridEngine.cells.count, 37)
+        XCTAssertEqual(DotGridEngine.checkPath.count, 5)
+        XCTAssertEqual(Set(DotGridEngine.checkPath).count, 5)
+        let done = DotGridEngine.cells.indices.map {
+            DotGridEngine.target(mode: .done, cell: $0, time: 0, since: 2, loudness: 0, reduceMotion: false)
         }
-        let styled = DictationWritingCaptionView.styledText("Keep  this\nreadable", stableWordCount: 2, color: .white)
-        XCTAssertEqual(styled.runs.count, 2)
-        let confirmed = try XCTUnwrap(styled.runs.first)
-        XCTAssertEqual(String(styled[confirmed.range].characters), "Keep  this")
+        XCTAssertEqual(done.filter { $0 == 1 }.count, 5, "Only the check is lit once it has drawn")
+        XCTAssertEqual(done.reduce(0, +), 5)
+
+        let center = DotGridEngine.cells.firstIndex { $0.row == 3 && $0.column == 3 }!
+        let loud = DotGridEngine.target(mode: .speaking, cell: center, time: 0, since: 0, loudness: 1, reduceMotion: true)
+        let quiet = DotGridEngine.target(mode: .speaking, cell: center, time: 0, since: 0, loudness: 0, reduceMotion: true)
+        XCTAssertEqual(loud, 1)
+        XCTAssertEqual(quiet, 0)
     }
 }

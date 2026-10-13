@@ -1,40 +1,82 @@
 import AppKit
 import SwiftUI
 
-/// Shared sizing for the floating dictation caption.
+/// Shared sizing for the floating dictation pill.
 ///
-/// The **NSPanel** stays at max height for the whole session (bottom edge pinned
-/// once). Only the caption **card** inside changes height, bottom-aligned, so new
-/// lines extend upward — the shell never translates on screen.
+/// The **NSPanel** keeps one fixed size for the whole session (bottom edge
+/// pinned once). Only the pill inside changes width, centered and
+/// bottom-aligned, so the shell never moves on screen.
 enum DictationCaptionLayout {
     static let shadowMargin: CGFloat = 24
+    /// Default and limits for the pill's widest size. Right-click the pill to change it.
     static let captionWidth: CGFloat = 360
     static let minimumCaptionWidth: CGFloat = 320
     static let maximumCaptionWidth: CGFloat = 900
-    static let maxHeight: CGFloat = 196
+    /// Panel content height: room for the failure card. The pill itself is `pillHeight`.
+    static let maxHeight: CGFloat = 150
 
-    /// One inset for the text and the control row, so their left and right
-    /// edges line up on the same vertical.
-    static let inset: CGFloat = 12
-    static let fontSize: CGFloat = 13
-    static let horizontalPadding: CGFloat = inset
-    static let verticalPadding: CGFloat = 11
-    static let controlSize: CGFloat = 26
-    static let controlBarHeight: CGFloat = controlSize + inset
-    static let cornerRadius: CGFloat = 22
-    static let modeGlyphReserve: CGFloat = 20
+    static let pillHeight: CGFloat = 44
+    /// The dot grid: 7 dots across on a 4pt pitch, so dots land on whole points.
+    static let gridSize: CGFloat = 28
+    static let gridInset: CGFloat = (pillHeight - gridSize) / 2
+    static let textLeading: CGFloat = gridInset + gridSize + 10
+    static let textTrailing: CGFloat = 16
+    static let controlSize: CGFloat = 28
+    /// Trailing room while the hover buttons show: gap, two buttons, inset.
+    static let controlsTrailing: CGFloat = 10 + controlSize * 2 + 4 + gridInset
+    static let fontSize: CGFloat = 14
+    static let cardCornerRadius: CGFloat = 22
+    /// Gap between words, equal to a space in the caption font, so the line reads as normal text.
+    static let wordSpacing: CGFloat = NSAttributedString(
+        string: " ",
+        attributes: [.font: NSFont.systemFont(ofSize: fontSize, weight: .medium)]
+    ).size().width
 
-    /// The text area hugs one line while listening and grows up to three
-    /// before older lines scroll away under the top fade.
-    /// Same line height the caret measurer lays text out with, so three lines fit exactly.
-    static let lineHeight: CGFloat = NSLayoutManager().defaultLineHeight(
-        for: NSFont.systemFont(ofSize: fontSize, weight: .medium)
-    )
-    static var textAreaMinHeight: CGFloat { lineHeight + verticalPadding * 2 }
-    static var textAreaMaxHeight: CGFloat { lineHeight * 3 + verticalPadding * 2 }
-    static var minimumCardHeight: CGFloat { textAreaMinHeight + controlBarHeight }
+    /// Each word is drawn in a frame of exactly this width, so the line's width
+    /// is known before layout and the pill can spring to it in the same frame.
+    @MainActor static func wordWidth(_ word: String) -> CGFloat {
+        if let width = wordWidths[word] { return width }
+        if wordWidths.count > 4_000 { wordWidths.removeAll() }
+        let font = NSFont.systemFont(ofSize: fontSize, weight: .medium)
+        let width = ceil(NSAttributedString(string: word, attributes: [.font: font]).size().width * 2) / 2
+        wordWidths[word] = width
+        return width
+    }
 
-    /// Fixed panel slot for one dictation session — caption card grows inside this.
+    @MainActor static func lineWidth(of words: [String]) -> CGFloat {
+        words.reduce(0) { $0 + wordWidth($1) } + wordSpacing * CGFloat(max(0, words.count - 1))
+    }
+
+    @MainActor private static var wordWidths: [String: CGFloat] = [:]
+
+    enum PillContent: Equatable {
+        /// Just the dot grid: a circle.
+        case empty
+        /// A line of words this wide.
+        case text(CGFloat)
+        /// The finished label ("Pasted") this wide.
+        case label(CGFloat)
+    }
+
+    /// The pill hugs its content and stops at `maxWidth`; longer text scrolls inside.
+    static func pillWidth(_ content: PillContent, maxWidth: CGFloat, showsControls: Bool) -> CGFloat {
+        let trailing = showsControls ? controlsTrailing : textTrailing
+        switch content {
+        case .empty:
+            return showsControls ? gridInset + gridSize + controlsTrailing : pillHeight
+        case .text(let width):
+            return min(maxWidth, textLeading + ceil(width) + trailing)
+        case .label(let width):
+            return min(maxWidth, textLeading + ceil(width) + textTrailing)
+        }
+    }
+
+    /// How much of the line of words is visible inside a pill of this width.
+    static func textViewport(pillWidth: CGFloat, showsControls: Bool) -> CGFloat {
+        max(0, pillWidth - textLeading - (showsControls ? controlsTrailing : textTrailing))
+    }
+
+    /// Fixed panel slot for one dictation session — the pill changes size inside this.
     static var sessionPanelSize: NSSize {
         let margin = shadowMargin * 2
         return NSSize(
@@ -47,12 +89,5 @@ enum DictationCaptionLayout {
         let width = requested.isFinite ? CGFloat(requested) : captionWidth
         let ceiling = max(minimumCaptionWidth, min(maximumCaptionWidth, availableWidth - shadowMargin * 2))
         return min(max(width, minimumCaptionWidth), ceiling)
-    }
-
-    static func modeGlyphReserve(for mode: DictationMode) -> CGFloat {
-        switch mode {
-        case .askScreen, .actions: return modeGlyphReserve
-        default: return 0
-        }
     }
 }

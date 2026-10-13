@@ -803,12 +803,10 @@ final class DictationCoordinator: ObservableObject {
             self.maybeUnloadImmediately(reason: "transcription complete")
         }
 
-        // Hold the done state just long enough to register, then tear down.
-        // A copied result stays longer so "Press ⌘V" can be read. Guarded so
-        // a cancel/new session that already moved the phase doesn't get
-        // yanked back to idle underneath the user.
-        // 1s leaves time for the card to shrink into the "Pasted" pill and be read.
-        try? await Task.sleep(for: .seconds(copied ? 3 : 1))
+        // Hold the done state about a second, long enough for the pill to draw
+        // its check, then tear down. Guarded so a cancel/new session that
+        // already moved the phase doesn't get yanked back to idle underneath the user.
+        try? await Task.sleep(for: .seconds(1))
         if !Task.isCancelled, sessionID == id, case .done = phase {
             resetToIdle()
         }
