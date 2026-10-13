@@ -464,8 +464,17 @@ final class DictationCoordinator: ObservableObject {
         if let native = engine as? AppleSpeechTranscriptionEngine {
             native.vocabularyHints = Array(sessionWeightedTerms.map(\.canonical).prefix(100))
         }
+        // Snapshotted once so live and final passes rewrite and prompt alike.
+        let polishVocabulary = LiveCaptionComposer.polishVocabulary(settings: settings, correctionStore: correctionStore)
+        let learnedPairs = correctionStore?.learnedPairs(limit: 20) ?? []
         let styleEngine = DictationStyleEngine(cacheDirectory: store.qwenCacheURL)
-        setUpLivePolisher(settings: settings, speechEngine: speechEngine, styleEngine: styleEngine)
+        setUpLivePolisher(
+            settings: settings,
+            speechEngine: speechEngine,
+            styleEngine: styleEngine,
+            vocabulary: polishVocabulary,
+            learnedPairs: learnedPairs
+        )
         let liveScreenTermsTask = screenContextTask
         Task { [weak self] in
             let terms = await liveScreenTermsTask?.value ?? []
@@ -477,6 +486,11 @@ final class DictationCoordinator: ObservableObject {
                     correctionStore: self.correctionStore,
                     screenTerms: terms
                 )
+                // The hints above were set before screen capture finished;
+                // refresh them so Apple Speech also gets the screen terms.
+                if let native = self.engine as? AppleSpeechTranscriptionEngine {
+                    native.vocabularyHints = Array(self.sessionWeightedTerms.map(\.canonical).prefix(100))
+                }
             }
         }
         // Windowed live preview — canonical paste may still re-decode below.
@@ -592,7 +606,10 @@ final class DictationCoordinator: ObservableObject {
                 screenTerms: contextTerms
             )
             : sessionWeightedTerms
-        let withVocab = VocabularyMatcher.apply(oneShotRaw, weighted: weightedTerms)
+        // Learned pairs go first: they target the exact misheard form, which
+        // a strong term's phonetic pass could otherwise rewrite differently.
+        let withLearned = VocabularyMatcher.applyLearnedPairs(oneShotRaw, pairs: learnedPairs)
+        let withVocab = VocabularyMatcher.apply(withLearned, weighted: weightedTerms)
 
         // 6. Pre-clean smart formatting: expand spoken punctuation commands
         // ("comma" → ",", "new paragraph" → "\n\n") before the cleaner runs.
@@ -650,6 +667,8 @@ final class DictationCoordinator: ObservableObject {
                     level: effectiveLevel,
                     formatLists: settings.formatLists,
                     formatParagraphs: settings.formatParagraphs,
+                    vocabulary: polishVocabulary,
+                    learnedPairs: learnedPairs,
                     screenContextTerms: contextTerms,
                     transcript: raw
                 )
@@ -674,6 +693,8 @@ final class DictationCoordinator: ObservableObject {
                     level: effectiveLevel,
                     formatLists: settings.formatLists,
                     formatParagraphs: settings.formatParagraphs,
+                    vocabulary: polishVocabulary,
+                    learnedPairs: learnedPairs,
                     screenContextTerms: contextTerms,
                     onFallback: { [weak self] in
                         guard let self, self.sessionID == id, self.phase == .rewriting else { return }
@@ -1008,7 +1029,9 @@ final class DictationCoordinator: ObservableObject {
     private func setUpLivePolisher(
         settings: DictationSettings,
         speechEngine: MeetingTranscriptionEngine,
-        styleEngine: DictationStyleEngine
+        styleEngine: DictationStyleEngine,
+        vocabulary: [String],
+        learnedPairs: [VocabularyMatcher.LearnedPair]
     ) {
         livePolisher = nil
         livePolishProvider = nil
@@ -1037,13 +1060,14 @@ final class DictationCoordinator: ObservableObject {
         }
         guard wantsLivePolish, let provider = livePolishProvider else { return }
 
-        // Mirrors steps 5–7 of the final pipeline (vocab → pre-clean →
-        // filler cleanup) so a live-polished prefix is byte-equal to what
+        // Mirrors steps 5–7 of the final pipeline (learned pairs + vocab →
+        // pre-clean → filler cleanup) so a live-polished prefix is byte-equal to what
         // the final pass would feed the model for the same raw text — the
         // exact-match reuse in runSession depends on this.
         let prepare: @MainActor (String) -> String = { [weak self] rawPrefix in
             guard let self else { return rawPrefix }
-            let withVocab = VocabularyMatcher.apply(rawPrefix, weighted: self.sessionWeightedTerms)
+            let withLearned = VocabularyMatcher.applyLearnedPairs(rawPrefix, pairs: learnedPairs)
+            let withVocab = VocabularyMatcher.apply(withLearned, weighted: self.sessionWeightedTerms)
             let withPunct = SmartFormatter.applyPreClean(withVocab, settings: settings)
             return TranscriptCleaner.clean(withPunct)
         }
@@ -1062,6 +1086,8 @@ final class DictationCoordinator: ObservableObject {
                     level: level,
                     formatLists: settings.formatLists,
                     formatParagraphs: settings.formatParagraphs,
+                    vocabulary: vocabulary,
+                    learnedPairs: learnedPairs,
                     screenContextTerms: self?.liveScreenContextTerms ?? [],
                     onFallback: { failed = true }
                 )
@@ -1074,6 +1100,8 @@ final class DictationCoordinator: ObservableObject {
                     level: level,
                     formatLists: settings.formatLists,
                     formatParagraphs: settings.formatParagraphs,
+                    vocabulary: vocabulary,
+                    learnedPairs: learnedPairs,
                     screenContextTerms: self?.liveScreenContextTerms ?? [],
                     transcript: input
                 )

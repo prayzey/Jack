@@ -55,12 +55,22 @@ final class CorrectionStore: ObservableObject {
     /// Corrected forms only, in reinforcement order. Used by the
     /// coordinator to merge into the vocabulary list at Polish time.
     func topCorrectedTerms(limit: Int) -> [String] {
-        Array(
-            activeCorrections
-                .sorted { $0.reinforcementCount > $1.reinforcementCount }
-                .prefix(limit)
-                .map(\.corrected)
-        )
+        learnedPairs(limit: limit).map(\.corrected)
+    }
+
+    /// Active (misheard → corrected) pairs, most reinforced first. Feeds the
+    /// deterministic pre-polish rewrite and the polish prompt.
+    func learnedPairs(limit: Int) -> [VocabularyMatcher.LearnedPair] {
+        activeCorrections
+            .sorted { $0.reinforcementCount > $1.reinforcementCount }
+            .prefix(limit)
+            .map {
+                VocabularyMatcher.LearnedPair(
+                    original: $0.original,
+                    corrected: $0.corrected,
+                    reinforcementCount: $0.reinforcementCount
+                )
+            }
     }
 
     func refresh() {

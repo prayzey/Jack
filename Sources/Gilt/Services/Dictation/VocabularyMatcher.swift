@@ -33,6 +33,42 @@ enum VocabularyMatcher {
         }
     }
 
+    /// A learned (misheard → corrected) pair from `CorrectionStore`, kept as
+    /// plain values for the same reason as `WeightedTerm`.
+    struct LearnedPair: Equatable {
+        let original: String
+        let corrected: String
+        let reinforcementCount: Int
+    }
+
+    /// Rewrites learned pairs before polish, so a fix the user made by hand
+    /// no longer depends on the model noticing it. Only pairs seen at least
+    /// twice with an original of 4+ characters qualify: a one-off or a short
+    /// fragment ("jak") is too likely to hit real words. Matches are whole
+    /// words, case-insensitive, and a capitalized match keeps its capital.
+    static func applyLearnedPairs(_ transcript: String, pairs: [LearnedPair]) -> String {
+        let eligible = pairs
+            .filter { $0.reinforcementCount >= 2 && $0.original.count >= 4 }
+            .sorted { $0.original.count > $1.original.count }
+        var result = transcript
+        for pair in eligible {
+            // Unicode letter boundaries, so "josé" or "jakł" never count as
+            // a word ending.
+            let pattern = "(?<![\\p{L}\\p{N}])" + NSRegularExpression.escapedPattern(for: pair.original) + "(?![\\p{L}\\p{N}])"
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { continue }
+            // Reversed so earlier ranges stay valid while later ones change.
+            for match in regex.matches(in: result, range: NSRange(result.startIndex..., in: result)).reversed() {
+                guard let range = Range(match.range, in: result) else { continue }
+                var replacement = pair.corrected
+                if result[range].first?.isUppercase == true {
+                    replacement = replacement.prefix(1).uppercased() + replacement.dropFirst()
+                }
+                result.replaceSubrange(range, with: replacement)
+            }
+        }
+        return result
+    }
+
     /// Apply the substitution pipeline. Returns the transcript unchanged if
     /// the term list is empty. All terms are treated as `.normal` — i.e.
     /// today's exact / spelled-out matching only. Use `apply(_:weighted:)`

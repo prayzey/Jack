@@ -39,6 +39,12 @@ final class QwenLocalLLM {
     /// True while a `generate` call is mid-`respond` — see the guard there.
     private var isGenerating = false
     private var unloadAfterGeneration = false
+    /// A stopped generation discards the model because llama.cpp may still
+    /// hold the interrupted context. Reloading right after keeps the next
+    /// dictation from skipping polish. `unload()` clears this so a requested
+    /// teardown stays torn down.
+    private var reloadAfterDiscard = false
+    private var cacheDirectory: URL?
 
     private init() {}
 
@@ -71,6 +77,7 @@ final class QwenLocalLLM {
             return
         }
         MeetingDownloadLog.log("Qwen ensureLoaded() — cacheDir=\(cacheDirectory.path)")
+        self.cacheDirectory = cacheDirectory
         try FileManager.default.createDirectory(
             at: cacheDirectory,
             withIntermediateDirectories: true,
@@ -200,7 +207,7 @@ final class QwenLocalLLM {
                 acceptingPartials = false
                 // This library's actor loop may finish before stop is serviced.
                 // Keep its context occupied, then discard it after completion.
-                unloadAfterGeneration = true
+                discardAfterGeneration()
                 bot.stop()
             },
             onCompletion: { [self] in
@@ -208,6 +215,13 @@ final class QwenLocalLLM {
                 if unloadAfterGeneration {
                     self.bot = nil
                     unloadAfterGeneration = false
+                    let reloadFrom = reloadAfterDiscard ? cacheDirectory : nil
+                    reloadAfterDiscard = false
+                    // ensureLoaded joins an in-flight load, so this never
+                    // loads twice, and the model init itself runs detached.
+                    if let reloadFrom {
+                        Task { try? await self.ensureLoadedFromCache(cacheDirectory: reloadFrom) }
+                    }
                 }
             }
         ) {
@@ -226,7 +240,7 @@ final class QwenLocalLLM {
                     try? await Task.sleep(for: .milliseconds(100))
                     guard !Task.isCancelled, acceptingPartials else { return }
                     if let cap = maxOutputCharacters, bot.output.count > cap {
-                        self.unloadAfterGeneration = true
+                        self.discardAfterGeneration()
                         exceededCap = true
                         acceptingPartials = false
                         bot.stop()
@@ -244,9 +258,16 @@ final class QwenLocalLLM {
         }
     }
 
+    /// An earlier `unload()` request wins, so it never turns into a reload.
+    private func discardAfterGeneration() {
+        if !unloadAfterGeneration { reloadAfterDiscard = true }
+        unloadAfterGeneration = true
+    }
+
     /// Eagerly tear down the model — frees memory when the user deletes it
     /// from the Models panel.
     func unload() {
+        reloadAfterDiscard = false
         if let loadingTask {
             unloadAfterGeneration = true
             loadingTask.cancel()
@@ -295,8 +316,11 @@ final class QwenLocalLLM {
         }
         let loadElapsed = Date().timeIntervalSince(loadStart)
         MeetingDownloadLog.log("Qwen model loaded in \(String(format: "%.1f", loadElapsed))s")
+        // Neutral on purpose: this one model serves dictation polish, screen
+        // Q&A, and meetings. Each caller's prompt sets its own role, so a
+        // meeting persona here would bleed into dictation.
         loaded.useResolvedTemplate(
-            systemPrompt: "You are Jack, a precise meeting note-taker. Stay concise, never invent facts, and respect the requested output format.",
+            systemPrompt: "You are a precise writing assistant. Stay concise, never invent facts, and respect the requested output format.",
             modelName: Self.huggingFaceModelID
         )
         loaded.postprocess = { _ in }

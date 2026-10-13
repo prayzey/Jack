@@ -162,4 +162,49 @@ final class DictationStyleEngineTests: XCTestCase {
             XCTAssertEqual(DictationStyleEngine.validatedOutput(changed, original: source), source)
         }
     }
+
+    // MARK: - User vocabulary and learned corrections
+
+    func testPromptIncludesDedupedVocabularyCappedAtForty() {
+        let terms = ["Adesokan", "adesokan"] + (1...60).map { "Term\($0)" }
+        let prompt = DictationStyleEngine.makePrompt(
+            style: .conversation, level: .medium, formatLists: false, formatParagraphs: false,
+            vocabulary: terms, screenContextTerms: [], transcript: "talk to adasokan"
+        )
+        XCTAssertTrue(prompt.contains("PREFERRED SPELLINGS: Adesokan, Term1, "))
+        XCTAssertFalse(prompt.contains("adesokan,"))
+        XCTAssertTrue(prompt.contains("Term39."))
+        XCTAssertFalse(prompt.contains("Term40"))
+        XCTAssertTrue(prompt.contains("Never add these terms as content"))
+    }
+
+    func testPromptIncludesLearnedPairsCappedAtTwenty() {
+        let pairs = (1...25).map {
+            VocabularyMatcher.LearnedPair(original: "wrong\($0)", corrected: "Right\($0)", reinforcementCount: 1)
+        }
+        let prompt = DictationStyleEngine.makePrompt(
+            style: .conversation, level: .medium, formatLists: false, formatParagraphs: false,
+            learnedPairs: pairs, screenContextTerms: [], transcript: "say wrong1 twice"
+        )
+        XCTAssertTrue(prompt.contains("LEARNED CORRECTIONS: if you see \"wrong1\", write \"Right1\";"))
+        XCTAssertTrue(prompt.contains("\"wrong20\""))
+        XCTAssertFalse(prompt.contains("wrong21"))
+        // Arrows would be echoed and trip the deliberation filter.
+        XCTAssertFalse(prompt.contains("->"))
+    }
+
+    func testPromptOmitsVocabularyAndCorrectionLinesWhenEmpty() {
+        let prompt = prompt(style: .conversation, level: .medium)
+        XCTAssertFalse(prompt.contains("PREFERRED SPELLINGS"))
+        XCTAssertFalse(prompt.contains("LEARNED CORRECTIONS"))
+    }
+
+    func testPolishTimeoutScalesWithLengthAndCaps() {
+        func words(_ count: Int) -> String { Array(repeating: "word", count: count).joined(separator: " ") }
+        XCTAssertEqual(DictationStyleEngine.polishTimeout(for: ""), 5)
+        XCTAssertEqual(DictationStyleEngine.polishTimeout(for: words(40)), 6)
+        XCTAssertEqual(DictationStyleEngine.polishTimeout(for: words(120)), 8)
+        XCTAssertEqual(DictationStyleEngine.polishTimeout(for: words(280)), 12)
+        XCTAssertEqual(DictationStyleEngine.polishTimeout(for: words(2_000)), 12)
+    }
 }

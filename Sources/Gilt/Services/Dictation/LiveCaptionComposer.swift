@@ -96,6 +96,21 @@ enum LiveCaptionComposer {
         return weightedTerms
     }
 
+    /// Spellings the polish model must keep: the user's strong terms, then
+    /// their normal ones, then learned corrections. Packs stay out (generic
+    /// terms) and so do screen terms (they have their own prompt line).
+    /// `DictationStyleEngine.makePrompt` dedupes and caps the list.
+    @MainActor
+    static func polishVocabulary(
+        settings: DictationSettings,
+        correctionStore: CorrectionStore?
+    ) -> [String] {
+        let custom = settings.weightedCustomVocabulary()
+        return custom.filter { $0.strength == .strong }.map(\.text)
+            + custom.filter { $0.strength != .strong }.map(\.text)
+            + (correctionStore?.topCorrectedTerms(limit: 30) ?? [])
+    }
+
     /// Live caption — filler cleanup only. Vocab substitution runs once on the
     /// finalized transcript so partials stay faithful to Flash output (FluidVoice-style).
     static func publishableLiveState(from raw: State) -> State {

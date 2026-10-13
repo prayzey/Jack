@@ -89,4 +89,50 @@ final class VocabularyMatcherTests: XCTestCase {
     func testSoundexDifferentForDifferentSounds() {
         XCTAssertNotEqual(VocabularyMatcher.soundex("claude"), VocabularyMatcher.soundex("rabbit"))
     }
+
+    // MARK: - Learned correction pairs
+
+    private func pair(_ original: String, _ corrected: String, seen: Int = 2) -> VocabularyMatcher.LearnedPair {
+        .init(original: original, corrected: corrected, reinforcementCount: seen)
+    }
+
+    func testLearnedPairReplacesWholeWordsCaseInsensitively() {
+        let out = VocabularyMatcher.applyLearnedPairs(
+            "ask adasokan, then ADASOKAN again",
+            pairs: [pair("adasokan", "Adesokan")]
+        )
+        XCTAssertEqual(out, "ask Adesokan, then Adesokan again")
+    }
+
+    func testLearnedPairKeepsLeadingCapitalOfTheMatch() {
+        let out = VocabularyMatcher.applyLearnedPairs(
+            "Clawdy said clawdy",
+            pairs: [pair("clawdy", "claudie")]
+        )
+        XCTAssertEqual(out, "Claudie said claudie")
+    }
+
+    func testLearnedPairNeverReplacesInsideAWord() {
+        let out = VocabularyMatcher.applyLearnedPairs(
+            "clawdbot and jakarta and clawd",
+            pairs: [pair("clawd", "Claude"), pair("jak", "Jack", seen: 9)]
+        )
+        XCTAssertEqual(out, "clawdbot and jakarta and Claude")
+    }
+
+    func testLearnedPairThresholdsSkipOneOffsAndShortOriginals() {
+        let pairs = [pair("teh", "the", seen: 5), pair("adasokan", "Adesokan", seen: 1)]
+        XCTAssertEqual(
+            VocabularyMatcher.applyLearnedPairs("teh adasokan", pairs: pairs),
+            "teh adasokan"
+        )
+    }
+
+    func testLearnedMultiWordPairWinsOverItsShorterPart() {
+        let out = VocabularyMatcher.applyLearnedPairs(
+            "praise adasokan wrote",
+            pairs: [pair("adasokan", "Adesokan"), pair("praise adasokan", "Praise Adesokan")]
+        )
+        XCTAssertEqual(out, "Praise Adesokan wrote")
+    }
 }
