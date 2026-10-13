@@ -135,6 +135,13 @@ final class DictationAudioCaptureService {
             streamWrapper: streamWrapper
         )
 
+        #if DEBUG
+        if let path = ProcessInfo.processInfo.environment["JACK_DICTATION_TEST_AUDIO"], let tapSink {
+            try startTestFeed(path: path, sink: tapSink)
+            return
+        }
+        #endif
+
         // Fresh engine per session. The previous one was torn down in
         // `finalizeStop()` so coreaudiod could release the input device and
         // turn the orange mic indicator off.
@@ -387,6 +394,10 @@ final class DictationAudioCaptureService {
 
     private func finalizeStop() {
         guard isRecording else { return }
+        #if DEBUG
+        testFeedTask?.cancel()
+        testFeedTask = nil
+        #endif
         if let configurationObserver {
             NotificationCenter.default.removeObserver(configurationObserver)
             self.configurationObserver = nil
@@ -413,6 +424,40 @@ final class DictationAudioCaptureService {
         streamWrapper.finish()
         logger.info("Dictation audio capture stopped after \(String(format: "%.2f", duration))s")
     }
+
+    #if DEBUG
+    private var testFeedTask: Task<Void, Never>?
+
+    /// Test-only microphone. With `JACK_DICTATION_TEST_AUDIO` set to an audio
+    /// file, a debug build hears that file in real time, then silence until
+    /// the session stops, so a whole dictation can be measured end to end
+    /// without anyone speaking. Release builds never compile this.
+    private func startTestFeed(path: String, sink: DictationAudioTapSink) throws {
+        let file = try AVAudioFile(forReading: URL(fileURLWithPath: path))
+        let format = file.processingFormat
+        let frames: AVAudioFrameCount = 1024
+        let interval = Double(frames) / format.sampleRate
+        nonisolated(unsafe) let source = file
+        testFeedTask = Task.detached(priority: .userInitiated) {
+            var next = ContinuousClock.now
+            while !Task.isCancelled {
+                guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames) else { return }
+                if (try? source.read(into: buffer, frameCount: frames)) == nil || buffer.frameLength == 0 {
+                    buffer.frameLength = frames
+                    for channel in 0..<Int(format.channelCount) {
+                        buffer.floatChannelData?[channel].update(repeating: 0, count: Int(frames))
+                    }
+                }
+                sink.handle(rawBuffer: buffer)
+                next = next.advanced(by: .seconds(interval))
+                try? await Task.sleep(until: next, clock: .continuous)
+            }
+        }
+        startedAt = Date()
+        isRecording = true
+        logger.notice("Dictation is hearing a test file instead of the microphone")
+    }
+    #endif
 
     // MARK: - Internal
 
@@ -694,6 +739,10 @@ private final class ContinuationLatch: @unchecked Sendable {
 }
 
 final class DictationAudioStreamWrapper: @unchecked Sendable {
+    /// About 90 s of 16 kHz chunks (a few MB at most). The English model can
+    /// take about 10 s to load after an idle unload, and everything said
+    /// meanwhile waits here; the old 512 (about 11 s) left no margin.
+    static let bufferLimit = 4096
     private(set) var stream: AsyncStream<AVAudioPCMBuffer>
     private let lock = NSLock()
     private var continuation: AsyncStream<AVAudioPCMBuffer>.Continuation?
@@ -702,7 +751,7 @@ final class DictationAudioStreamWrapper: @unchecked Sendable {
 
     init() {
         var continuationOut: AsyncStream<AVAudioPCMBuffer>.Continuation?
-        self.stream = AsyncStream(bufferingPolicy: .bufferingOldest(512)) { continuation in
+        self.stream = AsyncStream(bufferingPolicy: .bufferingOldest(Self.bufferLimit)) { continuation in
             continuationOut = continuation
         }
         self.continuation = continuationOut
@@ -714,7 +763,7 @@ final class DictationAudioStreamWrapper: @unchecked Sendable {
         continuation?.finish()
         var continuationOut: AsyncStream<AVAudioPCMBuffer>.Continuation?
         overflowed = false
-        stream = AsyncStream(bufferingPolicy: .bufferingOldest(512)) { continuation in
+        stream = AsyncStream(bufferingPolicy: .bufferingOldest(Self.bufferLimit)) { continuation in
             continuationOut = continuation
         }
         continuation = continuationOut
