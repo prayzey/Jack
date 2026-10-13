@@ -1038,8 +1038,8 @@
 "dictation.overlay.copyDraft" = "Entwurf kopieren";
 "dictation.overlay.settings" = "Einstellungen…";
 "dictation.overlay.dismiss" = "Schließen";
-"dictation.overlay.copied" = "Kopiert — bereit zum Einfügen";
-"dictation.overlay.pasteSent" = "Einfügen angefordert";
+"dictation.overlay.copied" = "Kopiert";
+"dictation.overlay.pasteSent" = "Eingefügt";
 "dictation.overlay.transcript" = "Live-Transkript";
 
 /* Dictation streaming and recovery */
@@ -1055,7 +1055,7 @@
 "dictation.error.finalizeTimeout" = "Das Fertigstellen der Transkription dauerte zu lange. Kopiere den Entwurf und versuche es erneut.";
 "dictation.error.inputTooLong" = "Der Text ist zu lang für das lokale KI-Modell.";
 "dictation.error.outputLimit" = "Die Antwort der lokalen KI hat das Limit überschritten.";
-"dictation.overlay.manualPaste" = "Drücke ⌘V an der gewünschten Stelle.";
+"dictation.overlay.manualPaste" = "Mit ⌘V einfügen";
 "dictation.overlay.durationLimit" = "Das Diktat endet automatisch nach 10 Minuten.";
 "dictation.overlay.endingSoon" = "Endet gleich";
 "dictation.caption.resetWidth" = "Textfeldbreite zurücksetzen";
@@ -1073,7 +1073,7 @@
 "dictation.history.copyOriginal" = "Original kopieren";
 "dictation.history.tab" = "Letzte";
 "dictation.history.blurb" = "Finde deine Worte wieder und bestimme, was auf diesem Mac gespeichert bleibt.";
-"dictation.overlay.polishSkipped" = "KI-Überarbeitung übersprungen; deine Transkription bleibt erhalten.";
+"dictation.overlay.polishSkipped" = "KI-Überarbeitung übersprungen";
 "dictation.paste.automatic" = "Automatisch einfügen";
 "dictation.paste.destination" = "Wenn du die App wechselst, das Feld bearbeitest oder den Cursor bewegst, kopiert Jack den Text zum manuellen Einfügen.";
 

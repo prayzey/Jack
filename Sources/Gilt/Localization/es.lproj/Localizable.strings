@@ -1038,8 +1038,8 @@
 "dictation.overlay.copyDraft" = "Copiar borrador";
 "dictation.overlay.settings" = "Ajustes…";
 "dictation.overlay.dismiss" = "Cerrar";
-"dictation.overlay.copied" = "Copiado — listo para pegar";
-"dictation.overlay.pasteSent" = "Pegado solicitado";
+"dictation.overlay.copied" = "Copiado";
+"dictation.overlay.pasteSent" = "Pegado";
 "dictation.overlay.transcript" = "Transcripción en directo";
 
 /* Dictation streaming and recovery */
@@ -1055,7 +1055,7 @@
 "dictation.error.finalizeTimeout" = "La transcripción tardó demasiado en finalizar. Copia el borrador e inténtalo de nuevo.";
 "dictation.error.inputTooLong" = "El texto es demasiado largo para el modelo de IA local.";
 "dictation.error.outputLimit" = "La respuesta de la IA local superó su límite.";
-"dictation.overlay.manualPaste" = "Pulsa ⌘V donde quieras insertar el texto.";
+"dictation.overlay.manualPaste" = "Pulsa ⌘V para pegar";
 "dictation.overlay.durationLimit" = "El dictado finaliza automáticamente a los 10 minutos.";
 "dictation.overlay.endingSoon" = "Terminando pronto";
 "dictation.caption.resetWidth" = "Restablecer el ancho del texto";
@@ -1073,7 +1073,7 @@
 "dictation.history.copyOriginal" = "Copiar original";
 "dictation.history.tab" = "Recientes";
 "dictation.history.blurb" = "Recupera tus palabras y decide qué se guarda en este Mac.";
-"dictation.overlay.polishSkipped" = "Se omitió la mejora con IA; tu transcripción se conserva.";
+"dictation.overlay.polishSkipped" = "Mejora con IA omitida";
 "dictation.paste.automatic" = "Pegar automáticamente";
 "dictation.paste.destination" = "Si cambias de app, editas el campo o mueves el cursor, Jack copia el texto para que lo pegues.";
 

@@ -1,9 +1,11 @@
+import AppKit
 import SwiftUI
 
-/// Floating dictation overlay with an adjustable width and fixed height.
-/// Long transcripts follow the newest line inside the text area
-/// while a control bar (level meter, status, finish, cancel) stays pinned
-/// below. Processing keeps the same shell, and failures remain until dismissed.
+/// Floating dictation overlay with an adjustable width. The card hugs one
+/// line while listening, grows to three, then follows the newest line, with
+/// a control bar (cancel, level meter, status, finish) pinned below.
+/// Processing keeps the same shell, finishing shrinks it into a small
+/// confirmation pill, and failures remain until dismissed.
 struct DictationOverlayView: View {
     @ObservedObject var coordinator: DictationCoordinator
     @ObservedObject var store: DictationStore
@@ -26,8 +28,6 @@ struct DictationOverlayView: View {
                 Group {
                     if case .failed(let reason) = displayPhase {
                         failureCard(reason: reason, width: captionWidth)
-                    } else if displayPhase == .done {
-                        doneCard(width: captionWidth)
                     } else {
                         sessionCard(width: captionWidth)
                     }
@@ -36,7 +36,7 @@ struct DictationOverlayView: View {
                 // theme, not the Mac's appearance, or light themes get white-on-white.
                 .environment(\.colorScheme, palette.isDarkShell ? .dark : .light)
                 .transition(.opacity)
-                .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: displayPhase)
+                .animation(reduceMotion ? nil : .spring(response: 0.42, dampingFraction: 0.82), value: displayPhase)
                 .frame(width: captionWidth)
             }
             .padding(DictationCaptionLayout.shadowMargin)
@@ -62,10 +62,20 @@ struct DictationOverlayView: View {
 
     // MARK: - Session card
 
-    // Keep the caption's identity through listening, transcription and cleanup.
-    // Replacing it per phase resets its cursor and scroll position.
+    // Keep the caption's identity through listening, transcription, cleanup
+    // and the finish. Replacing it per phase resets its cursor and scroll
+    // position, and swapping in a separate done card made the ending jump.
     private func sessionCard(width: CGFloat) -> some View {
-        VStack(spacing: 0) {
+        // Idle shares the collapsed shape so the card tucks away as the panel
+        // fades out, and grows out of the same small pill on the next start.
+        let collapsed = displayPhase == .done || displayPhase == .idle
+        let pill = displayPhase == .done ? doneSize(maxWidth: width) : CGSize(width: 120, height: 36)
+        let shape = RoundedRectangle(
+            // A capsule while it holds one line; taller pills keep a softer 18pt corner.
+            cornerRadius: collapsed ? min(pill.height / 2, 18) : DictationCaptionLayout.cornerRadius,
+            style: .continuous
+        )
+        return VStack(spacing: 0) {
             DictationWritingCaptionView(
                 transcript: coordinator.liveTranscript,
                 stableWordCount: coordinator.liveTranscriptStableWordCount,
@@ -73,38 +83,27 @@ struct DictationOverlayView: View {
                 palette: palette,
                 frontierColor: captionFrontierColor,
                 width: width,
-                minHeight: DictationCaptionLayout.textAreaHeight,
-                maxHeight: DictationCaptionLayout.textAreaHeight,
+                minHeight: DictationCaptionLayout.textAreaMinHeight,
+                maxHeight: DictationCaptionLayout.textAreaMaxHeight,
                 fontSize: DictationCaptionLayout.fontSize,
                 horizontalPadding: DictationCaptionLayout.horizontalPadding,
                 verticalPadding: DictationCaptionLayout.verticalPadding,
                 leadingContentInset: modeGlyphReserve
             )
-            .overlay(alignment: .topLeading) {
-                if coordinator.isPreparing, coordinator.liveTranscript.isEmpty, !isProcessingPhase(displayPhase) {
-                    Text(L10n.string("dictation.overlay.preparing", default: "Starting microphone…"))
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(palette.captionText.opacity(0.75))
-                        .padding(.leading, 28 + modeGlyphReserve)
-                        .padding(.top, DictationCaptionLayout.verticalPadding)
-                }
-            }
             controlBar
         }
-        .background(captionBackground)
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(captionBorderColor, lineWidth: captionBorderWidth)
-        )
-        .shadow(color: shadowColor.opacity(0.55), radius: 10, y: 4)
-        .overlay(alignment: .topLeading) {
-            modeGlyph
+        .frame(width: width)
+        .overlay(alignment: .topLeading) { modeGlyph }
+        .opacity(collapsed ? 0 : 1)
+        .frame(width: collapsed ? pill.width : nil, height: collapsed ? pill.height : nil)
+        .overlay {
+            doneContent(size: pill)
+                .opacity(displayPhase == .done ? 1 : 0)
         }
-        .overlay(alignment: .trailing) {
-            Capsule().fill(palette.captionText.opacity(0.28))
-                .frame(width: 2, height: 14).padding(.trailing, 3)
-                .allowsHitTesting(false)
-        }
+        .background(captionSurface(shape))
+        .clipShape(shape)
+        .overlay(shape.strokeBorder(captionBorderColor, lineWidth: captionBorderWidth))
+        .shadow(color: shadowColor.opacity(0.5), radius: 12, y: 5)
     }
 
     private var resizeHandles: some View {
@@ -114,7 +113,7 @@ struct DictationOverlayView: View {
             resizeHandle(.right)
         }
         .padding(.horizontal, DictationCaptionLayout.shadowMargin - WindowResizeHandleMetrics.edgeThickness / 2)
-        .frame(height: DictationCaptionLayout.cardHeight)
+        .frame(height: DictationCaptionLayout.minimumCardHeight)
         .padding(.bottom, DictationCaptionLayout.shadowMargin)
     }
 
@@ -135,30 +134,32 @@ struct DictationOverlayView: View {
         .help(L10n.string("dictation.caption.resize", default: "Drag to widen or narrow the caption"))
     }
 
-    /// Recording feedback and explicit finish/cancel controls.
+    /// Recording feedback and explicit finish/cancel controls. Both buttons
+    /// are the same size and sit on the text's inset, so the card's edges line up.
     private var controlBar: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
             cancelButton
-            ZStack {
+            // The spinner takes only its own width, so "Polishing…" sits right beside it.
+            Group {
                 if isProcessingPhase(displayPhase) {
-                    ProgressView().controlSize(.small)
+                    ProgressView().controlSize(.small).scaleEffect(0.8).frame(width: 16, height: 16)
                 } else {
                     DictationLevelMeter(level: coordinator.level, color: captionFrontierColor)
+                        .frame(width: 63, height: 16)
                 }
             }
-            .frame(width: 63, height: 16)
             .accessibilityHidden(true)
             Text(isProcessingPhase(displayPhase) ? processingLabel : recordingStatus)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(palette.captionText.opacity(0.8))
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(palette.captionText.opacity(0.55))
                 .contentTransition(.opacity)
             Spacer(minLength: 4)
             Button(action: onStop) {
                 Image(systemName: "checkmark")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(palette.captionText)
-                    .frame(width: 28, height: 28)
-                    .background(Circle().fill(captionFrontierColor.opacity(0.3)))
+                    .font(.system(size: 10.5, weight: .bold))
+                    .foregroundStyle(surfaceColor)
+                    .frame(width: DictationCaptionLayout.controlSize, height: DictationCaptionLayout.controlSize)
+                    .background(Circle().fill(captionFrontierColor))
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
@@ -168,8 +169,9 @@ struct DictationOverlayView: View {
             .disabled(isProcessingPhase(displayPhase))
             .accessibilityHidden(isProcessingPhase(displayPhase))
         }
-        .padding(.horizontal, 10)
-        .frame(height: DictationCaptionLayout.controlBarHeight)
+        .padding(.horizontal, DictationCaptionLayout.inset)
+        .padding(.bottom, DictationCaptionLayout.inset)
+        .frame(height: DictationCaptionLayout.controlBarHeight, alignment: .top)
     }
 
     private var recordingStatus: String {
@@ -195,10 +197,11 @@ struct DictationOverlayView: View {
     private var cancelButton: some View {
         Button { coordinator.cancelSession() } label: {
             Image(systemName: "xmark")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(palette.captionText.opacity(0.85))
-                .frame(width: 28, height: 28)
-                .contentShape(Rectangle())
+                .font(.system(size: 9.5, weight: .bold))
+                .foregroundStyle(palette.captionText.opacity(0.7))
+                .frame(width: DictationCaptionLayout.controlSize, height: DictationCaptionLayout.controlSize)
+                .background(Circle().fill(palette.captionText.opacity(0.08)))
+                .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(L10n.string("dictation.overlay.cancel", default: "Cancel dictation"))
@@ -206,11 +209,13 @@ struct DictationOverlayView: View {
     }
 
     private func failureCard(reason: String, width: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let shape = RoundedRectangle(cornerRadius: DictationCaptionLayout.cornerRadius, style: .continuous)
+        return VStack(alignment: .leading, spacing: 10) {
             Text(L10n.string("dictation.overlay.failed", default: "Dictation stopped"))
                 .font(.system(size: 13, weight: .semibold))
             Text(reason)
                 .font(.system(size: 12))
+                .foregroundStyle(palette.captionText.opacity(0.75))
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 12) {
                 if !coordinator.liveTranscript.isEmpty {
@@ -231,50 +236,62 @@ struct DictationOverlayView: View {
             .controlSize(.small)
         }
         .foregroundStyle(palette.captionText.opacity(0.95))
-        .padding(14)
+        .padding(16)
         .frame(width: width, alignment: .leading)
-        .background(captionBackground)
-        .shadow(color: shadowColor.opacity(0.5), radius: 10, y: 4)
+        .background(captionSurface(shape))
+        .overlay(shape.strokeBorder(palette.captionBorder, lineWidth: 0.8))
+        .shadow(color: shadowColor.opacity(0.5), radius: 12, y: 5)
     }
 
-    // MARK: - Done card
+    // MARK: - Done pill
 
-    /// The after-state: same fixed shell, a quiet checkmark, and a short
-    /// confirmation. Kept quiet on purpose — it flashes for under a second.
-    private func doneCard(width: CGFloat) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(captionFrontierColor)
-
-            VStack(alignment: .leading, spacing: 3) {
+    /// The after-state: the session card shrinks into a small pill with a
+    /// check and one short word. Kept quiet on purpose; it shows for about a second.
+    private func doneContent(size: CGSize) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "checkmark")
+                .font(.system(size: 8.5, weight: .heavy))
+                .foregroundStyle(surfaceColor)
+                .frame(width: 18, height: 18)
+                .background(Circle().fill(captionFrontierColor))
+            VStack(alignment: .leading, spacing: 1) {
                 Text(doneLabel)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(palette.captionText.opacity(0.92))
-                if coordinator.lastResultWasCopied {
-                    Text(L10n.string("dictation.overlay.manualPaste", default: "Press ⌘V where you want the text."))
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(palette.captionText)
+                ForEach(doneDetails, id: \.self) { detail in
+                    Text(detail)
                         .font(.system(size: 11))
-                        .foregroundStyle(palette.captionText.opacity(0.8))
-                }
-                if coordinator.polishWasSkipped {
-                    Text(L10n.string("dictation.overlay.polishSkipped", default: "AI cleanup skipped; your transcript is preserved."))
-                        .font(.system(size: 11))
-                        .foregroundStyle(palette.captionText.opacity(0.8))
-                        .fixedSize(horizontal: false, vertical: true)
+                        .foregroundStyle(palette.captionText.opacity(0.6))
                 }
             }
+            .lineLimit(1)
         }
-        .padding(.horizontal, 12)
-        .frame(
-            width: width,
-            height: DictationCaptionLayout.cardHeight
-        )
-        .background(captionBackground)
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(captionFrontierColor.opacity(0.45), lineWidth: captionBorderWidth)
-        )
-        .shadow(color: shadowColor.opacity(0.5), radius: 10, y: 4)
+        .padding(.leading, 9)
+        .padding(.trailing, 14)
+        .frame(width: size.width, height: size.height, alignment: .leading)
+    }
+
+    /// Lines under the done title: how to paste a copied result, and whether cleanup was skipped.
+    private var doneDetails: [String] {
+        var details: [String] = []
+        if coordinator.lastResultWasCopied {
+            details.append(L10n.string("dictation.overlay.manualPaste", default: "Press ⌘V to paste"))
+        }
+        if coordinator.polishWasSkipped {
+            details.append(L10n.string("dictation.overlay.polishSkipped", default: "AI cleanup skipped"))
+        }
+        return details
+    }
+
+    /// The pill animates between explicit sizes, so it measures its own text
+    /// with the same system fonts the labels render in.
+    private func doneSize(maxWidth: CGFloat) -> CGSize {
+        let titleFont = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        let detailFont = NSFont.systemFont(ofSize: 11)
+        let widths = [(doneLabel as NSString).size(withAttributes: [.font: titleFont]).width]
+            + doneDetails.map { ($0 as NSString).size(withAttributes: [.font: detailFont]).width }
+        let width = 9 + 18 + 8 + ceil(widths.max() ?? 0) + 2 + 14
+        return CGSize(width: min(maxWidth, width), height: 36 + CGFloat(doneDetails.count) * 14)
     }
 
     private var doneLabel: String {
@@ -283,8 +300,8 @@ struct DictationOverlayView: View {
                 ?? L10n.string("dictation.overlay.doneAction", default: "Done")
         }
         return coordinator.lastResultWasCopied
-            ? L10n.string("dictation.overlay.copied", default: "Copied — ready to paste")
-            : L10n.string("dictation.overlay.pasteSent", default: "Paste sent")
+            ? L10n.string("dictation.overlay.copied", default: "Copied")
+            : L10n.string("dictation.overlay.pasteSent", default: "Pasted")
     }
 
     private var processingLabel: String {
@@ -304,20 +321,30 @@ struct DictationOverlayView: View {
 
     // MARK: - Shared chrome
 
+    /// Dot, meter and buttons use the caption's own text color, so every theme
+    /// stays black and white. Ask and Actions keep their mode colors.
     private var captionFrontierColor: Color {
         if isAskMode { return askAuraColor }
         if isActionsMode { return actionsAuraColor }
-        if palette.auraColor != .clear { return palette.auraColor }
-        return Color(red: 0.38, green: 0.56, blue: 0.96)
+        return palette.captionText
     }
 
-    private var captionBackground: some View {
-        RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .fill(
-                LinearGradient(
-                    colors: [palette.captionTop, palette.captionBottom],
-                    startPoint: .top,
-                    endPoint: .bottom
+    /// Icon color on filled buttons: the card's own surface.
+    private var surfaceColor: Color {
+        palette.isDarkShell ? .black : .white
+    }
+
+    private func captionSurface(_ shape: RoundedRectangle) -> some View {
+        // Theme fills are slightly translucent. An opaque base underneath
+        // keeps the app behind the panel from showing through the words.
+        shape.fill(surfaceColor)
+            .overlay(
+                shape.fill(
+                    LinearGradient(
+                        colors: [palette.captionTop, palette.captionBottom],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
                 )
             )
     }
@@ -333,18 +360,13 @@ struct DictationOverlayView: View {
 
     @ViewBuilder
     private var modeGlyph: some View {
-        if showAskGlyph {
-            Image(systemName: "eye.fill")
+        if showAskGlyph || showActionsGlyph {
+            Image(systemName: showAskGlyph ? "eye.fill" : "checklist")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(askGlyphColor.opacity(isProcessingPhase(displayPhase) ? 0.7 : 1))
-                .padding(.top, DictationCaptionLayout.modeGlyphInset)
-                .padding(.leading, DictationCaptionLayout.modeGlyphInset)
-        } else if showActionsGlyph {
-            Image(systemName: "checklist")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(actionsGlyphColor.opacity(isProcessingPhase(displayPhase) ? 0.7 : 1))
-                .padding(.top, DictationCaptionLayout.modeGlyphInset)
-                .padding(.leading, DictationCaptionLayout.modeGlyphInset)
+                .foregroundStyle((showAskGlyph ? askGlyphColor : actionsGlyphColor).opacity(isProcessingPhase(displayPhase) ? 0.7 : 1))
+                .frame(height: DictationCaptionLayout.lineHeight)
+                .padding(.top, DictationCaptionLayout.verticalPadding)
+                .padding(.leading, DictationCaptionLayout.inset)
         }
     }
 

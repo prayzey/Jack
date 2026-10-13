@@ -159,6 +159,25 @@ final class DictationCoordinator: ObservableObject {
         if let sleepObserver { NSWorkspace.shared.notificationCenter.removeObserver(sleepObserver) }
     }
 
+    #if DEBUG
+    /// Puts the overlay into one visual state so tests can render it without a microphone.
+    func showPreviewState(
+        _ phase: DictationPhase,
+        transcript: String = "",
+        stableWordCount: Int = 0,
+        level: Double = 0,
+        copied: Bool = false,
+        polishSkipped: Bool = false
+    ) {
+        self.phase = phase
+        liveTranscript = transcript
+        liveTranscriptStableWordCount = stableWordCount
+        self.level = level
+        lastResultWasCopied = copied
+        polishWasSkipped = polishSkipped
+    }
+    #endif
+
     func attach(store: DictationStore) {
         self.store = store
     }
@@ -788,7 +807,8 @@ final class DictationCoordinator: ObservableObject {
         // A copied result stays longer so "Press ⌘V" can be read. Guarded so
         // a cancel/new session that already moved the phase doesn't get
         // yanked back to idle underneath the user.
-        try? await Task.sleep(for: .seconds(copied ? 3 : 0.7))
+        // 1s leaves time for the card to shrink into the "Pasted" pill and be read.
+        try? await Task.sleep(for: .seconds(copied ? 3 : 1))
         if !Task.isCancelled, sessionID == id, case .done = phase {
             resetToIdle()
         }

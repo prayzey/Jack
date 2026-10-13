@@ -4,7 +4,7 @@ import SwiftUI
 /// Shared sizing for the floating dictation caption.
 ///
 /// The **NSPanel** stays at max height for the whole session (bottom edge pinned
-/// once). Only the caption **card** inside grows taller, bottom-aligned, so new
+/// once). Only the caption **card** inside changes height, bottom-aligned, so new
 /// lines extend upward — the shell never translates on screen.
 enum DictationCaptionLayout {
     static let shadowMargin: CGFloat = 24
@@ -13,16 +13,26 @@ enum DictationCaptionLayout {
     static let maximumCaptionWidth: CGFloat = 900
     static let maxHeight: CGFloat = 196
 
-    /// Fixed-height session card: the box never grows vertically — text
-    /// scrolls up inside `textAreaHeight` and the control bar sits below.
-    static let textAreaHeight: CGFloat = 76
-    static let controlBarHeight: CGFloat = 34
-    static var cardHeight: CGFloat { textAreaHeight + controlBarHeight }
+    /// One inset for the text and the control row, so their left and right
+    /// edges line up on the same vertical.
+    static let inset: CGFloat = 12
     static let fontSize: CGFloat = 13
-    static let horizontalPadding: CGFloat = 10
-    static let verticalPadding: CGFloat = 6
-    static let modeGlyphInset: CGFloat = 8
+    static let horizontalPadding: CGFloat = inset
+    static let verticalPadding: CGFloat = 11
+    static let controlSize: CGFloat = 26
+    static let controlBarHeight: CGFloat = controlSize + inset
+    static let cornerRadius: CGFloat = 22
     static let modeGlyphReserve: CGFloat = 20
+
+    /// The text area hugs one line while listening and grows up to three
+    /// before older lines scroll away under the top fade.
+    /// Same line height the caret measurer lays text out with, so three lines fit exactly.
+    static let lineHeight: CGFloat = NSLayoutManager().defaultLineHeight(
+        for: NSFont.systemFont(ofSize: fontSize, weight: .medium)
+    )
+    static var textAreaMinHeight: CGFloat { lineHeight + verticalPadding * 2 }
+    static var textAreaMaxHeight: CGFloat { lineHeight * 3 + verticalPadding * 2 }
+    static var minimumCardHeight: CGFloat { textAreaMinHeight + controlBarHeight }
 
     /// Fixed panel slot for one dictation session — caption card grows inside this.
     static var sessionPanelSize: NSSize {

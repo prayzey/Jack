@@ -423,7 +423,8 @@ struct DictationSettings: Codable, Equatable {
     /// `obsidian` is the default — calm dark warm theme that reads on top
     /// of any app. The user can swap to any preset in `DictationPillTheme`
     /// from the Dictate settings tab.
-    var pillTheme: DictationPillTheme = .obsidian
+    // Onyx is Jack's black and white; Obsidian adds warm gold.
+    var pillTheme: DictationPillTheme = .onyx
     /// Remember the width chosen by dragging the caption's side edges.
     var captionWidth: Double = 360
     /// When true, the system's output volume is lowered while dictation is
@@ -679,7 +680,7 @@ extension DictationSettings {
         self.saveToClipboardHistory = try c.decodeIfPresent(Bool.self, forKey: .saveToClipboardHistory) ?? true
         self.saveDictationHistory = try c.decodeIfPresent(Bool.self, forKey: .saveDictationHistory) ?? true
         self.autoPasteIntoActiveApp = try c.decodeIfPresent(Bool.self, forKey: .autoPasteIntoActiveApp) ?? true
-        self.pillTheme = try c.decodeIfPresent(DictationPillTheme.self, forKey: .pillTheme) ?? .obsidian
+        self.pillTheme = try c.decodeIfPresent(DictationPillTheme.self, forKey: .pillTheme) ?? .onyx
         self.captionWidth = try c.decodeIfPresent(Double.self, forKey: .captionWidth) ?? 360
         self.duckOtherAudio = try c.decodeIfPresent(Bool.self, forKey: .duckOtherAudio) ?? false
         self.duckAmount = try c.decodeIfPresent(Double.self, forKey: .duckAmount) ?? 0.6

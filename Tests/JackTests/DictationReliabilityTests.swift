@@ -152,6 +152,37 @@ final class DictationReliabilityTests: XCTestCase {
         XCTAssertEqual(DictationPasteService.spaced(", then", after: "s"), ", then")
     }
 
+    /// Renders each caption state to PNGs when `JACK_DICTATION_SNAPSHOTS` names a folder.
+    func testCaptionStatesRenderForReview() throws {
+        guard ProcessInfo.processInfo.environment["JACK_DICTATION_SNAPSHOTS"] != nil else { return }
+        let text = "Hey Sam, can we push the design review to Thursday afternoon? I want to walk through the new dictation pill and get your notes before we ship it on Monday."
+        let states: [(String, DictationPhase, String, Int, Double, Bool, Bool)] = [
+            ("1-listening-empty", .listening, "", 0, 0.3, false, false),
+            ("2-listening-one-line", .listening, "Hey Sam, can we push the design", 5, 0.5, false, false),
+            ("3-listening-long", .listening, text, 26, 0.6, false, false),
+            ("4-polishing", .rewriting, text, 29, 0, false, false),
+            ("5-done-pasted", .done, text, 29, 0, false, false),
+            ("6-done-copied", .done, text, 29, 0, true, true),
+        ]
+        for theme in [DictationPillTheme.aurora, .onyx] {
+            let suite = "DictationSnapshots.\(UUID())"
+            let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+            defer {
+                defaults.removePersistentDomain(forName: suite)
+                try? FileManager.default.removeItem(at: root)
+            }
+            let store = DictationStore(defaults: defaults, rootURL: root)
+            store.settings.pillTheme = theme
+            let coordinator = DictationCoordinator()
+            for state in states {
+                coordinator.showPreviewState(state.1, transcript: state.2, stableWordCount: state.3,
+                                             level: state.4, copied: state.5, polishSkipped: state.6)
+                try renderIfRequested(coordinator: coordinator, store: store, name: "\(theme.rawValue)-\(state.0)")
+            }
+        }
+    }
+
     private var testTarget: DictationPasteTarget {
         DictationPasteTarget(pid: 1, element: nil)
     }
@@ -160,6 +191,9 @@ final class DictationReliabilityTests: XCTestCase {
         guard let directory = ProcessInfo.processInfo.environment["JACK_DICTATION_SNAPSHOTS"] else { return }
         let host = NSHostingView(rootView: DictationOverlayView(coordinator: coordinator, store: store, onStop: coordinator.stopSession))
         host.frame = NSRect(origin: .zero, size: DictationCaptionLayout.sessionPanelSize)
+        host.layoutSubtreeIfNeeded()
+        // Let the caption measure its text and settle before drawing.
+        RunLoop.main.run(until: Date().addingTimeInterval(0.8))
         host.layoutSubtreeIfNeeded()
         let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
         host.cacheDisplay(in: host.bounds, to: bitmap)

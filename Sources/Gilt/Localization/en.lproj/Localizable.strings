@@ -1048,8 +1048,8 @@
 "dictation.overlay.copyDraft" = "Copy draft";
 "dictation.overlay.settings" = "Settings…";
 "dictation.overlay.dismiss" = "Dismiss";
-"dictation.overlay.copied" = "Copied — ready to paste";
-"dictation.overlay.pasteSent" = "Paste sent";
+"dictation.overlay.copied" = "Copied";
+"dictation.overlay.pasteSent" = "Pasted";
 "dictation.overlay.transcript" = "Live transcript";
 
 /* Dictation streaming and recovery */
@@ -1065,7 +1065,7 @@
 "dictation.error.finalizeTimeout" = "Finishing the transcript took too long. Copy your draft and try again.";
 "dictation.error.inputTooLong" = "The text is too long for the local AI model.";
 "dictation.error.outputLimit" = "The local AI response exceeded its limit.";
-"dictation.overlay.manualPaste" = "Press ⌘V where you want the text.";
+"dictation.overlay.manualPaste" = "Press ⌘V to paste";
 "dictation.overlay.durationLimit" = "Dictation finishes automatically at 10 minutes.";
 "dictation.overlay.endingSoon" = "Finishing soon";
 "dictation.caption.resetWidth" = "Reset caption width";
@@ -1083,7 +1083,7 @@
 "dictation.history.copyOriginal" = "Copy original";
 "dictation.history.tab" = "Recent";
 "dictation.history.blurb" = "Recover your words and control what stays on this Mac.";
-"dictation.overlay.polishSkipped" = "AI cleanup skipped; your transcript is preserved.";
+"dictation.overlay.polishSkipped" = "AI cleanup skipped";
 "dictation.paste.automatic" = "Paste automatically";
 "dictation.paste.destination" = "If you change apps, edit the field, or move the cursor, Jack copies the text for you instead.";
 
