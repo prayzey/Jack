@@ -1059,6 +1059,7 @@
 "dictation.overlay.durationLimit" = "El dictado finaliza automáticamente a los 10 minutos.";
 "dictation.overlay.endingSoon" = "Terminando pronto";
 "dictation.caption.resetWidth" = "Restablecer el ancho del texto";
+"dictation.caption.resetPosition" = "Volver al centro";
 "dictation.caption.resize" = "Arrastra para ampliar o reducir el ancho del texto";
 "dictation.history.save" = "Guardar dictados recientes";
 "dictation.history.privacy" = "Conserva los últimos 100 dictados en este Mac. Al desactivarlo, se dejan de guardar nuevos dictados. El audio nunca se guarda.";

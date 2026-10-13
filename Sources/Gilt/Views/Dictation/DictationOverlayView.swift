@@ -61,6 +61,11 @@ struct DictationOverlayView: View {
             Button(L10n.string("dictation.caption.resetWidth", default: "Reset caption width")) {
                 store.settings.captionWidth = Double(DictationCaptionLayout.captionWidth)
             }
+            Button(L10n.string("dictation.caption.resetPosition", default: "Move back to center")) {
+                store.settings.captionOffsetX = 0
+                store.settings.captionOffsetY = 0
+            }
+            .disabled(store.settings.captionOffsetX == 0 && store.settings.captionOffsetY == 0)
         }
     }
 
@@ -127,7 +132,8 @@ struct DictationOverlayView: View {
         .background(surface(Capsule()))
         .clipShape(Capsule())
         .overlay(Capsule().strokeBorder(borderStyle, lineWidth: 0.5))
-        .background(PanelHoverTracker { isHovering = $0 })
+        // Hover shows the buttons; press and drag anywhere else moves the pill.
+        .background(PanelPointerArea { isHovering = $0 })
         .shadow(color: shadowColor, radius: 16, y: 6)
         // Grows out of a small dot when a session starts and tucks back in as the panel fades.
         .animation(reduceMotion ? nil : .spring(response: 0.42, dampingFraction: 0.68)) {

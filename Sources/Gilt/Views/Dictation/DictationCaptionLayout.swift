@@ -85,6 +85,26 @@ enum DictationCaptionLayout {
         )
     }
 
+    /// Where the panel sits on a screen: centered above the Dock, moved by the
+    /// offset the user dragged it to, and held so the pill stays fully on screen.
+    static func panelOrigin(in visibleFrame: CGRect, panelSize: CGSize, offset: CGPoint) -> CGPoint {
+        let home = homeOrigin(in: visibleFrame, panelSize: panelSize)
+        return CGPoint(
+            x: min(max(home.x + offset.x, visibleFrame.minX - shadowMargin), visibleFrame.maxX - panelSize.width + shadowMargin),
+            y: min(max(home.y + offset.y, visibleFrame.minY - shadowMargin), visibleFrame.maxY - shadowMargin - pillHeight)
+        )
+    }
+
+    /// The offset to remember after the user drops the panel at `origin`.
+    static func panelOffset(origin: CGPoint, in visibleFrame: CGRect, panelSize: CGSize) -> CGPoint {
+        let home = homeOrigin(in: visibleFrame, panelSize: panelSize)
+        return CGPoint(x: origin.x - home.x, y: origin.y - home.y)
+    }
+
+    private static func homeOrigin(in visibleFrame: CGRect, panelSize: CGSize) -> CGPoint {
+        CGPoint(x: visibleFrame.midX - panelSize.width / 2, y: visibleFrame.minY + 48)
+    }
+
     static func clampedCaptionWidth(_ requested: Double, availableWidth: CGFloat = .greatestFiniteMagnitude) -> CGFloat {
         let width = requested.isFinite ? CGFloat(requested) : captionWidth
         let ceiling = max(minimumCaptionWidth, min(maximumCaptionWidth, availableWidth - shadowMargin * 2))

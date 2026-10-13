@@ -425,8 +425,11 @@ struct DictationSettings: Codable, Equatable {
     /// from the Dictate settings tab.
     // Onyx is Jack's black and white; Obsidian adds warm gold.
     var pillTheme: DictationPillTheme = .onyx
-    /// Remember the width chosen by dragging the caption's side edges.
+    /// The pill's widest size, set from its right-click menu.
     var captionWidth: Double = 360
+    /// How far the user dragged the pill from its home above the Dock, in points.
+    var captionOffsetX: Double = 0
+    var captionOffsetY: Double = 0
     /// When true, the system's output volume is lowered while dictation is
     /// active so background music/videos don't compete with the user's voice.
     /// Off by default — many users dictate in silence already and being
@@ -653,7 +656,7 @@ extension DictationSettings {
     enum CodingKeys: String, CodingKey {
         case isEnabled, shortcut, postProcessEnabled, livePolishEnabled, livePolishEngine, style
         case saveToClipboardHistory, saveDictationHistory, autoPasteIntoActiveApp
-        case pillTheme, captionWidth, duckOtherAudio, duckAmount, backgroundAudioMode
+        case pillTheme, captionWidth, captionOffsetX, captionOffsetY, duckOtherAudio, duckAmount, backgroundAudioMode
         case muffleBackgroundAudio, muffleStyle
         case enabledVocabPacks, customVocabulary
         case packTermAdditions, packTermRemovals
@@ -682,6 +685,8 @@ extension DictationSettings {
         self.autoPasteIntoActiveApp = try c.decodeIfPresent(Bool.self, forKey: .autoPasteIntoActiveApp) ?? true
         self.pillTheme = try c.decodeIfPresent(DictationPillTheme.self, forKey: .pillTheme) ?? .onyx
         self.captionWidth = try c.decodeIfPresent(Double.self, forKey: .captionWidth) ?? 360
+        self.captionOffsetX = try c.decodeIfPresent(Double.self, forKey: .captionOffsetX) ?? 0
+        self.captionOffsetY = try c.decodeIfPresent(Double.self, forKey: .captionOffsetY) ?? 0
         self.duckOtherAudio = try c.decodeIfPresent(Bool.self, forKey: .duckOtherAudio) ?? false
         self.duckAmount = try c.decodeIfPresent(Double.self, forKey: .duckAmount) ?? 0.6
         self.backgroundAudioMode = try c.decodeIfPresent(BackgroundAudioMode.self, forKey: .backgroundAudioMode) ?? .lowerVolume

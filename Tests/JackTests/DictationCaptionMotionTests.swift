@@ -88,4 +88,48 @@ final class DictationCaptionMotionTests: XCTestCase {
         XCTAssertEqual(motion.revealed, 0)
         XCTAssertEqual(motion.width, 44)
     }
+
+    func testDraggedPillComesBackWhereItWasLeftAndStaysOnScreen() throws {
+        typealias L = DictationCaptionLayout
+        let screen = CGRect(x: 0, y: 80, width: 1440, height: 820)
+        let panel = CGSize(width: 408, height: 198)
+        let home = L.panelOrigin(in: screen, panelSize: panel, offset: .zero)
+        XCTAssertEqual(home, CGPoint(x: 516, y: 128))
+        // A drop is remembered as an offset and restored exactly.
+        let dropped = CGPoint(x: 900, y: 600)
+        let offset = L.panelOffset(origin: dropped, in: screen, panelSize: panel)
+        XCTAssertEqual(L.panelOrigin(in: screen, panelSize: panel, offset: offset), dropped)
+        // An offset from a bigger screen is pulled back so the pill stays visible.
+        let far = L.panelOrigin(in: screen, panelSize: panel, offset: CGPoint(x: 5_000, y: 5_000))
+        XCTAssertLessThanOrEqual(far.x + panel.width - L.shadowMargin, screen.maxX)
+        XCTAssertLessThanOrEqual(far.y + L.shadowMargin + L.pillHeight, screen.maxY)
+        let low = L.panelOrigin(in: screen, panelSize: panel, offset: CGPoint(x: -5_000, y: -5_000))
+        XCTAssertGreaterThanOrEqual(low.x + L.shadowMargin, screen.minX)
+        XCTAssertGreaterThanOrEqual(low.y + L.shadowMargin, screen.minY)
+
+        var settings = DictationSettings()
+        settings.captionOffsetX = 120
+        settings.captionOffsetY = -40
+        let reloaded = try JSONDecoder().decode(DictationSettings.self, from: JSONEncoder().encode(settings))
+        XCTAssertEqual(reloaded.captionOffsetX, 120)
+        XCTAssertEqual(reloaded.captionOffsetY, -40)
+        XCTAssertEqual(try JSONDecoder().decode(DictationSettings.self, from: Data("{}".utf8)).captionOffsetX, 0)
+    }
+
+    func testButtonsStayClickableOverTheDragSurface() {
+        let host = NSHostingView(rootView:
+            HStack(spacing: 0) {
+                Button("Finish") {}.buttonStyle(.plain).frame(width: 40, height: 40)
+                Color.clear.frame(width: 160, height: 40)
+            }
+            .background(PanelPointerArea { _ in })
+        )
+        // Hosted in an unshown window, the way the panel hosts the pill.
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 40), styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        let hit = { (x: CGFloat) in host.hitTest(host.convert(NSPoint(x: x, y: 20), to: host.superview)) }
+        XCTAssertFalse(hit(20) is PanelPointerArea.PointerView, "The button gets its click")
+        XCTAssertTrue(hit(150) is PanelPointerArea.PointerView, "Empty pill area starts a drag")
+    }
 }

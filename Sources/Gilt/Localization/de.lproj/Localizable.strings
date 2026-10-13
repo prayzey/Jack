@@ -1059,6 +1059,7 @@
 "dictation.overlay.durationLimit" = "Das Diktat endet automatisch nach 10 Minuten.";
 "dictation.overlay.endingSoon" = "Endet gleich";
 "dictation.caption.resetWidth" = "Textfeldbreite zurücksetzen";
+"dictation.caption.resetPosition" = "Zurück in die Mitte";
 "dictation.caption.resize" = "Ziehen, um das Textfeld breiter oder schmaler zu machen";
 "dictation.history.save" = "Letzte Diktate speichern";
 "dictation.history.privacy" = "Speichert die letzten 100 Diktate auf diesem Mac. Ausschalten verhindert neue Einträge. Audio wird nie gespeichert.";

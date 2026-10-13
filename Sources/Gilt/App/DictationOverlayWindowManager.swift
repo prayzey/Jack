@@ -19,6 +19,8 @@ final class DictationOverlayWindowManager {
     private var phaseObservation: AnyCancellable?
     private var themeObservation: AnyCancellable?
     private var widthObservation: AnyCancellable?
+    private var offsetObservation: AnyCancellable?
+    private var moveObservation: AnyCancellable?
     private var hideTask: Task<Void, Never>?
     private var escapeGlobalMonitor: Any?
     private var escapeLocalMonitor: Any?
@@ -34,6 +36,16 @@ final class DictationOverlayWindowManager {
         widthObservation = store.$settings.map(\.captionWidth).removeDuplicates()
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.updatePanelWidth() }
+
+        // "Move back to center" clears the offset; put a visible pill back at once.
+        offsetObservation?.cancel()
+        offsetObservation = store.$settings.map { CGPoint(x: $0.captionOffsetX, y: $0.captionOffsetY) }
+            .removeDuplicates()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self, let panel = self.panel, panel.isVisible else { return }
+                self.repositionPanel(panel)
+            }
 
         themeObservation?.cancel()
         themeObservation = store.$settings
@@ -175,10 +187,15 @@ final class DictationOverlayWindowManager {
 
         self.panel = panel
         self.hostingView = hostingView
+        // Remember where the user drags the pill once it comes to rest.
+        moveObservation = NotificationCenter.default.publisher(for: NSWindow.didMoveNotification, object: panel)
+            .debounce(for: .milliseconds(300), scheduler: RunLoop.main)
+            .sink { [weak self] _ in self?.rememberPanelPosition() }
         return panel
     }
 
-    /// Place the fixed-size panel above the dock. Height never changes mid-session.
+    /// Place the fixed-size panel above the Dock, or where the user last dragged it.
+    /// Height never changes mid-session.
     private func repositionPanel(_ panel: NSPanel) {
         guard let hostingView else { return }
 
@@ -190,16 +207,17 @@ final class DictationOverlayWindowManager {
         hostingView.setFrameSize(panelSize)
         panel.setContentSize(panelSize)
 
-        let screenFrame = screen.visibleFrame
-        let leftX = screenFrame.midX - panelSize.width / 2
-        let bottomEdge = screenFrame.minY + 48
-        let frame = NSRect(
-            x: leftX,
-            y: bottomEdge,
-            width: panelSize.width,
-            height: panelSize.height
-        )
-        panel.setFrame(frame, display: true)
+        let offset = CGPoint(x: store?.settings.captionOffsetX ?? 0, y: store?.settings.captionOffsetY ?? 0)
+        let origin = DictationCaptionLayout.panelOrigin(in: screen.visibleFrame, panelSize: panelSize, offset: offset)
+        panel.setFrame(NSRect(origin: origin, size: panelSize), display: true)
+    }
+
+    private func rememberPanelPosition() {
+        guard let panel, panel.isVisible, let store, let screen = panel.screen ?? screenForCursor() else { return }
+        let offset = DictationCaptionLayout.panelOffset(origin: panel.frame.origin, in: screen.visibleFrame, panelSize: panel.frame.size)
+        guard abs(offset.x - store.settings.captionOffsetX) > 0.5 || abs(offset.y - store.settings.captionOffsetY) > 0.5 else { return }
+        store.settings.captionOffsetX = offset.x
+        store.settings.captionOffsetY = offset.y
     }
 
     private func updatePanelWidth() {
