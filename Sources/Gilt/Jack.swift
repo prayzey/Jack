@@ -124,7 +124,11 @@ struct JackApp: App {
         _store = StateObject(wrappedValue: store)
         let dictationStore = DictationStore()
         _dictationStore = StateObject(wrappedValue: dictationStore)
-        let coordinator = DictationCoordinator()
+        let coordinator = DictationCoordinator(audio: DictationAudioCaptureService(
+            preferBuiltInMic: { [weak dictationStore] in
+                dictationStore?.settings.preferBuiltInMicOverBluetooth ?? true
+            }
+        ))
         coordinator.attach(store: dictationStore)
         coordinator.attach(statsStore: store.transcriptionStatsStore)
         // The correction learner is a long-lived sibling — reuse the same

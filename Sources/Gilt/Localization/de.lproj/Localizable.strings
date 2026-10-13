@@ -1083,6 +1083,8 @@
 "dictation.polish.live.description" = "Abgeschlossene Formulierungen im Untertitel verbessern, während du weitersprichst.";
 "dictation.caption.wider" = "Untertitel verbreitern";
 "dictation.caption.narrower" = "Untertitel verschmälern";
+"dictation.mic.preferBuiltIn.title" = "Mikrofon des Mac statt AirPods verwenden";
+"dictation.mic.preferBuiltIn.subtitle" = "AirPods und andere Bluetooth-Headsets wechseln beim Diktieren in einen Modus mit geringerer Qualität.";
 
 "settings.build.location" = "App-Speicherort";
 "settings.build.development" = "Dies ist ein lokaler Entwicklungsbuild.";

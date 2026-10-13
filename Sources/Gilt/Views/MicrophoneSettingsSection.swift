@@ -23,9 +23,13 @@ struct MicrophoneSettingsSection: View {
     /// default. Stored on `DictationSettings.preferredMicDeviceUID` /
     /// `MeetingSettings.preferredMicDeviceUID`.
     @Binding var selectedDeviceUID: String?
-    /// Two-way binding to the persisted gain. `1.0` is neutral in both modes.
+    /// Two-way binding to the persisted gain. `nil` means the user never
+    /// picked one and capture leaves the device's volume alone.
     /// See `DictationSettings.inputGain` for full semantics.
-    @Binding var inputGain: Float
+    @Binding var inputGain: Float?
+    /// `DictationSettings.preferBuiltInMicOverBluetooth`. Only matters while
+    /// following the system default, so the row hides once a mic is picked.
+    @Binding var preferBuiltInMic: Bool
 
     @StateObject private var devices = AudioInputDeviceManagerObserver()
 
@@ -33,6 +37,21 @@ struct MicrophoneSettingsSection: View {
         SettingsSection(L10n.string("settings.advanced.microphone.title", default: "Microphone")) {
             VStack(alignment: .leading, spacing: 0) {
                 microphonePickerRow
+                if selectedDeviceUID == nil {
+                    SettingsDivider()
+                    SettingsToggleRow(
+                        title: L10n.string(
+                            "dictation.mic.preferBuiltIn.title",
+                            default: "Use the Mac\u{2019}s microphone instead of AirPods"
+                        ),
+                        subtitle: L10n.string(
+                            "dictation.mic.preferBuiltIn.subtitle",
+                            default: "AirPods and other Bluetooth headsets switch to a lower-quality mode while you dictate."
+                        ),
+                        icon: "airpods",
+                        isOn: $preferBuiltInMic
+                    )
+                }
                 SettingsDivider()
                 inputGainRow
             }
@@ -169,7 +188,7 @@ struct MicrophoneSettingsSection: View {
             // (matches the "boost" framing the user expects).
             Slider(
                 value: Binding(
-                    get: { Double(inputGain) },
+                    get: { Double(shownGain) },
                     set: { inputGain = Float($0) }
                 ),
                 in: gainRange
@@ -210,7 +229,17 @@ struct MicrophoneSettingsSection: View {
     private var gainPercentLabel: String {
         // In hardware mode 1.0 reads as 100%; in software mode 1.0 reads as
         // 100% (unchanged) and 2.0 reads as 200%. Same arithmetic either way.
-        "\(Int((Double(inputGain) * 100).rounded()))%"
+        "\(Int((Double(shownGain) * 100).rounded()))%"
+    }
+
+    /// Until the user picks a gain, show what the mic is really at: the
+    /// device's own volume when it has one, otherwise unchanged (100%).
+    private var shownGain: Float {
+        if let inputGain { return inputGain }
+        guard hardwareGainAvailable else { return 1 }
+        let uid = selectedDeviceUID
+            ?? AudioInputDeviceManager.defaultInputDeviceID().flatMap { AudioInputDeviceManager.deviceUID(forID: $0) }
+        return AudioInputDeviceManager.hardwareGain(forUID: uid) ?? 1
     }
 
 }

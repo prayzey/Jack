@@ -232,6 +232,10 @@ struct DictationSettingsView: View {
             inputGain: Binding(
                 get: { store.settings.inputGain },
                 set: { store.settings.inputGain = $0 }
+            ),
+            preferBuiltInMic: Binding(
+                get: { store.settings.preferBuiltInMicOverBluetooth },
+                set: { store.settings.preferBuiltInMicOverBluetooth = $0 }
             )
         )
     }

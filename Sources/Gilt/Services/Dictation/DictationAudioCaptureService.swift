@@ -16,6 +16,11 @@ final class DictationAudioCaptureService {
     private var captureID: UUID?
     private var stopTask: Task<Void, Never>?
     private let requestAccess: @MainActor () async -> Bool
+    /// Read at each session start: `DictationSettings.preferBuiltInMicOverBluetooth`.
+    private let preferBuiltInMic: @MainActor () -> Bool
+    /// The device volume to put back when this session ends, set only when
+    /// Jack changed it because the user picked a gain.
+    private var volumeToRestore: DeviceVolumeRestore?
 
     var level: Double { tapSink?.snapshotLevel() ?? 0 }
     nonisolated static let maximumDurationSeconds: Double = 600
@@ -49,8 +54,12 @@ final class DictationAudioCaptureService {
     /// coordinator reads samples after the stream ends.
     private var finalizedCollectedSamples: [Float] = []
 
-    init(requestAccess: @escaping @MainActor () async -> Bool = DictationAudioCaptureService.requestMicrophoneAccess) {
+    init(
+        requestAccess: @escaping @MainActor () async -> Bool = DictationAudioCaptureService.requestMicrophoneAccess,
+        preferBuiltInMic: @escaping @MainActor () -> Bool = { true }
+    ) {
         self.requestAccess = requestAccess
+        self.preferBuiltInMic = preferBuiltInMic
         guard let format = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
             sampleRate: targetSampleRate,
@@ -89,18 +98,21 @@ final class DictationAudioCaptureService {
     ///
     /// - Parameters:
     ///   - preferredDeviceUID: The mic the user picked in settings. `nil`
-    ///     means follow the system default — we skip the device-binding call
-    ///     and AVAudioEngine binds to whatever `kAudioHardwarePropertyDefaultInputDevice`
-    ///     resolves to at engine init.
-    ///   - requestedGain: User-chosen gain. Interpretation depends on whether
-    ///     the bound device supports settable hardware volume:
+    ///     means follow the system default: AVAudioEngine binds to whatever
+    ///     `kAudioHardwarePropertyDefaultInputDevice` resolves to at engine
+    ///     init, unless that default is Bluetooth and `preferBuiltInMic`
+    ///     says to use the built-in mic instead.
+    ///   - requestedGain: User-chosen gain, or `nil` to leave the device's
+    ///     own volume alone. Interpretation depends on whether the bound
+    ///     device supports settable hardware volume:
     ///       - settable: clamped to `0...1` and written to
-    ///         `kAudioHardwareServiceDeviceProperty_VirtualMainVolume`
+    ///         `kAudioHardwareServiceDeviceProperty_VirtualMainVolume`; the
+    ///         previous volume comes back when capture stops or fails
     ///       - not settable: clamped to `1...2` and applied as a software
     ///         multiplier in the tap (only the >1.0 portion does anything —
     ///         we never *attenuate* in software, that's what hardware gain
     ///         is for)
-    func start(preferredDeviceUID: String? = nil, requestedGain: Float = 1.0) async throws {
+    func start(preferredDeviceUID: String? = nil, requestedGain: Float? = nil) async throws {
         if isRecording { return }
         let id = UUID()
         captureID = id
@@ -144,6 +156,7 @@ final class DictationAudioCaptureService {
         do {
             setup = try await Self.buildAudioEngineSetup(
                 preferredDeviceUID: preferredDeviceUID,
+                preferBuiltInMic: preferBuiltInMic(),
                 requestedGain: requestedGain
             )
         } catch {
@@ -155,6 +168,12 @@ final class DictationAudioCaptureService {
             throw error
         }
 
+        // The build may have changed the device volume. Every exit below that
+        // doesn't reach recording puts it back; once recording,
+        // `finalizeStop()` owns the restore.
+        var recordingStarted = false
+        defer { if !recordingStarted { setup.volumeToRestore?.apply() } }
+
         // A key release or Escape can arrive while permission/setup is awaiting.
         // Never start the microphone after that session has already ended.
         try Task.checkCancellation()
@@ -162,7 +181,7 @@ final class DictationAudioCaptureService {
 
         let engine = setup.engine
         audioEngine = engine
-        tapSink?.softwareGainFactor = setup.softwareGainFactor
+        tapSink?.levelProcessor.inputBoost = setup.softwareGainFactor
 
         guard setup.inputFormat.sampleRate > 0 else {
             audioEngine = nil
@@ -200,6 +219,8 @@ final class DictationAudioCaptureService {
             self.interruption = .deviceChanged
             self.stop(immediately: true)
         }
+        volumeToRestore = setup.volumeToRestore
+        recordingStarted = true
         startedAt = Date()
         isRecording = true
         logger.info("Dictation audio capture started")
@@ -234,6 +255,19 @@ final class DictationAudioCaptureService {
         let engine: AVAudioEngine
         let inputFormat: AVAudioFormat
         let softwareGainFactor: Float
+        let volumeToRestore: DeviceVolumeRestore?
+    }
+
+    /// A device's input volume from before Jack changed it.
+    private struct DeviceVolumeRestore: Sendable {
+        let uid: String
+        let volume: Float
+
+        /// Synchronous so a session that starts right after this one reads
+        /// the user's own volume as "previous", not the one Jack applied.
+        func apply() {
+            AudioInputDeviceManager.setHardwareGain(volume, forUID: uid)
+        }
     }
 
     /// Build an AVAudioEngine + bind mic + probe input format on a background
@@ -247,7 +281,8 @@ final class DictationAudioCaptureService {
     /// `start()` builds a fresh engine from scratch.
     private nonisolated static func buildAudioEngineSetup(
         preferredDeviceUID: String?,
-        requestedGain: Float,
+        preferBuiltInMic: Bool,
+        requestedGain: Float?,
         timeoutSeconds: Double = 4.0
     ) async throws -> AudioEngineSetup {
         try await withCheckedThrowingContinuation { continuation in
@@ -273,21 +308,33 @@ final class DictationAudioCaptureService {
                 // inside installTap with the `_outputFormat.channelCount`
                 // assert. (Safe to call with nil UID — that's the no-op
                 // "use default" path.)
-                AudioInputDeviceManager.bind(engine, toUID: preferredDeviceUID)
+                let defaultID = AudioInputDeviceManager.defaultInputDeviceID()
+                let bindUID = AudioInputDeviceManager.dictationInputUID(
+                    preferredUID: preferredDeviceUID,
+                    defaultTransport: defaultID.map { AudioInputDeviceManager.transportType(forID: $0) },
+                    availableDevices: AudioInputDeviceManager.inputDevices(),
+                    preferBuiltInOverBluetooth: preferBuiltInMic
+                )
 
                 // Decide which gain mode applies. The check has to happen
                 // against the device the engine ACTUALLY ended up bound to —
                 // if `bind` failed (unplugged), we resolve gain against the
                 // live system default.
-                let effectiveUID = preferredDeviceUID ?? AudioInputDeviceManager.defaultInputDeviceID().flatMap {
-                    AudioInputDeviceManager.deviceUID(forID: $0)
-                }
+                let effectiveUID = AudioInputDeviceManager.bind(engine, toUID: bindUID)
+                    ? bindUID
+                    : defaultID.flatMap { AudioInputDeviceManager.deviceUID(forID: $0) }
                 let softwareGain: Float
-                if AudioInputDeviceManager.canSetHardwareGain(forUID: effectiveUID) {
+                var volumeToRestore: DeviceVolumeRestore?
+                if let requestedGain, let effectiveUID,
+                   AudioInputDeviceManager.canSetHardwareGain(forUID: effectiveUID) {
+                    // Only touch the device's own volume when the user picked
+                    // a gain, and remember the old level so it comes back.
+                    volumeToRestore = AudioInputDeviceManager.hardwareGain(forUID: effectiveUID)
+                        .map { DeviceVolumeRestore(uid: effectiveUID, volume: $0) }
                     AudioInputDeviceManager.setHardwareGain(max(0, min(1, requestedGain)), forUID: effectiveUID)
                     softwareGain = 1.0
                 } else {
-                    softwareGain = max(1.0, min(2.0, requestedGain))
+                    softwareGain = max(1.0, min(2.0, requestedGain ?? 1.0))
                 }
 
                 // Force input node + format resolution NOW, while we're
@@ -301,8 +348,13 @@ final class DictationAudioCaptureService {
                     continuation.resume(returning: AudioEngineSetup(
                         engine: engine,
                         inputFormat: inputFormat,
-                        softwareGainFactor: softwareGain
+                        softwareGainFactor: softwareGain,
+                        volumeToRestore: volumeToRestore
                     ))
+                } else {
+                    // `start()` already gave up on this build after the
+                    // timeout, so nobody else will undo the volume change.
+                    volumeToRestore?.apply()
                 }
             }
         }
@@ -349,6 +401,8 @@ final class DictationAudioCaptureService {
         // bar indicator go away. `stop()` alone doesn't do this.
         audioEngine = nil
         micBridge = nil
+        volumeToRestore?.apply()
+        volumeToRestore = nil
         finalizedCollectedSamples = tapSink?.drainAndSnapshot() ?? []
         interruption = interruption ?? tapSink?.failure ?? streamWrapper.failure
         tapSink = nil
@@ -400,7 +454,8 @@ final class DictationAudioTapSink: @unchecked Sendable {
     private var level: Double = 0
     private var resampleConverter: AVAudioConverter?
     private var resampleSourceFormat: AVAudioFormat?
-    var softwareGainFactor: Float = 1.0
+    /// Set on MainActor before the tap is installed, then only used on `queue`.
+    var levelProcessor: DictationInputLevelProcessor
 
     init(
         targetFormat: AVAudioFormat,
@@ -412,6 +467,7 @@ final class DictationAudioTapSink: @unchecked Sendable {
         self.targetSampleRate = targetSampleRate
         self.streamWrapper = streamWrapper
         self.queue = queue
+        self.levelProcessor = DictationInputLevelProcessor(sampleRate: Float(targetSampleRate))
     }
 
     func handle(rawBuffer: AVAudioPCMBuffer) {
@@ -463,10 +519,10 @@ final class DictationAudioTapSink: @unchecked Sendable {
             lock.withLock { processingFailure = .overloaded }
             return
         }
-        applySoftwareGainIfNeeded(converted)
-
         guard let channelData = converted.floatChannelData?[0] else { return }
         let frames = Int(converted.frameLength)
+        // Target format is mono, so channel 0 is the whole signal.
+        levelProcessor.process(UnsafeMutableBufferPointer(start: channelData, count: frames))
         let measuredLevel = MeetingAudioCaptureService.averagePower(of: converted)
         lock.lock()
         // Keep a hard ceiling even if the main actor is delayed. The normal
@@ -492,6 +548,10 @@ final class DictationAudioTapSink: @unchecked Sendable {
         ) else { return nil }
         if resampleConverter == nil || resampleSourceFormat != rawBuffer.format {
             resampleConverter = AVAudioConverter(from: rawBuffer.format, to: targetFormat)
+            // Without downmix the converter keeps only channel 0, so a voice
+            // on input 2 of a multi-channel interface would be lost.
+            resampleConverter?.downmix = true
+            resampleConverter?.sampleRateConverterQuality = AVAudioQuality.high.rawValue
             resampleSourceFormat = rawBuffer.format
         }
         guard let converter = resampleConverter else { return nil }
@@ -500,20 +560,6 @@ final class DictationAudioTapSink: @unchecked Sendable {
         converter.convert(to: resampled, error: &error, withInputFrom: input.provide)
         guard error == nil else { return nil }
         return resampled
-    }
-
-    private func applySoftwareGainIfNeeded(_ buffer: AVAudioPCMBuffer) {
-        guard softwareGainFactor > 1.0, let channelData = buffer.floatChannelData else { return }
-        let gain = softwareGainFactor
-        let channels = Int(buffer.format.channelCount)
-        let frames = Int(buffer.frameLength)
-        for c in 0..<channels {
-            let samples = channelData[c]
-            for i in 0..<frames {
-                let amplified = samples[i] * gain
-                samples[i] = min(1.0, max(-1.0, amplified))
-            }
-        }
     }
 
     private func copyPCMBuffer(_ source: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
@@ -528,6 +574,84 @@ final class DictationAudioTapSink: @unchecked Sendable {
         return copy
     }
 
+}
+
+// MARK: - Level control
+
+/// Shapes the 16 kHz mono feed before the recognizer sees it: the user's
+/// software boost, a light automatic gain control (AGC) that lifts quiet
+/// mics toward a steady speech level, then a soft limiter instead of a hard
+/// clip. A plain value type so tests can drive it with synthetic signals.
+/// `process` allocates nothing and costs two `exp` calls per buffer plus a
+/// multiply per sample (`tanh` only on the rare samples above the knee).
+struct DictationInputLevelProcessor {
+    /// Speech level the AGC aims for: -20 dBFS RMS.
+    static let targetRMS: Float = 0.1
+    /// Most the AGC adds: +12 dB. Past that it mostly lifts room noise.
+    static let maxBoost: Float = 3.98
+    /// Below -50 dBFS the input is background hiss, so the AGC stays at 1.
+    static let gateRMS: Float = 0.00316
+    /// Samples under this pass through untouched; above it the limiter
+    /// bends smoothly toward 1 instead of clipping.
+    static let limiterKnee: Float = 0.8
+
+    let sampleRate: Float
+    /// The user's software boost (`1...2`) for mics without a settable
+    /// hardware volume.
+    var inputBoost: Float = 1
+    private(set) var agcGain: Float = 1
+    private var meanSquare: Float = 0
+
+    init(sampleRate: Float) {
+        self.sampleRate = sampleRate
+    }
+
+    mutating func process(_ samples: UnsafeMutableBufferPointer<Float>) {
+        guard !samples.isEmpty else { return }
+        let count = Float(samples.count)
+        let seconds = count / sampleRate
+        var sum: Float = 0
+        for sample in samples { sum += sample * sample }
+        let bufferMeanSquare = sum / count * inputBoost * inputBoost
+        if meanSquare == 0 {
+            // First audio of the session: start the estimate here. Ramping up
+            // from zero would read every opening as quiet and boost it.
+            meanSquare = bufferMeanSquare
+        } else {
+            // Slow level estimate: rises in 50 ms so a loud start isn't
+            // boosted, falls over 300 ms so pauses between words keep the gain.
+            meanSquare += (bufferMeanSquare - meanSquare)
+                * Self.smoothing(seconds, timeConstant: bufferMeanSquare > meanSquare ? 0.05 : 0.3)
+        }
+        let rms = meanSquare.squareRoot()
+        // Never attenuate (floor 1), never pass max boost, never lift hiss.
+        let wanted = rms < Self.gateRMS ? 1 : min(Self.maxBoost, max(1, Self.targetRMS / rms))
+        // Attack faster than release: drop the gain quickly when speech gets
+        // loud, raise it slowly so it doesn't pump between words.
+        let next = agcGain + (wanted - agcGain)
+            * Self.smoothing(seconds, timeConstant: wanted < agcGain ? 0.05 : 0.5)
+        // Ramp across the buffer so a gain change never clicks.
+        let step = (next - agcGain) / count
+        var gain = agcGain
+        for index in samples.indices {
+            gain += step
+            samples[index] = Self.softLimit(samples[index] * inputBoost * gain)
+        }
+        agcGain = next
+    }
+
+    /// Identity up to the knee, then a tanh curve that meets the line with
+    /// the same slope and approaches ±1 without passing it.
+    static func softLimit(_ x: Float) -> Float {
+        let magnitude = abs(x)
+        guard magnitude > limiterKnee else { return x }
+        let headroom = 1 - limiterKnee
+        return copysign(limiterKnee + headroom * tanh((magnitude - limiterKnee) / headroom), x)
+    }
+
+    private static func smoothing(_ seconds: Float, timeConstant: Float) -> Float {
+        1 - exp(-seconds / timeConstant)
+    }
 }
 
 enum DictationAudioError: LocalizedError {
