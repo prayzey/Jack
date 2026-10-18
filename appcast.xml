@@ -6,6 +6,46 @@
         <description>Direct-download updates for Jack.</description>
         <language>en</language>
         <item>
+            <title>1.1.0</title>
+            <pubDate>Sat, 17 Oct 2026 21:25:55 -0400</pubDate>
+            <link>https://jack.novor.dev</link>
+            <sparkle:fullReleaseNotesLink>https://jack.novor.dev/releases/v1.1.0</sparkle:fullReleaseNotesLink>
+            <sparkle:version>635</sparkle:version>
+            <sparkle:shortVersionString>1.1.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description><![CDATA[<p>Control the volume of each app from your menu bar, with clearer dictation and a movable live caption that stays out of your way.</p>
+<h3>Sound Controls</h3>
+<ul>
+<li>Adjust or mute individual apps, choose their speakers, and watch live audio levels from the menu bar. Per-app controls require macOS 14.2 or later</li>
+<li>Use Solo to hear one app, Call Mode to lower other audio during calls, or save a favourite mix as a sound scene</li>
+<li>See and control playback in Spotify and Music, and adjust individual browser tabs with the optional Jack Tab Volume extension</li>
+<li>Choose how other apps sound while you dictate, including lower volume and four Muffle styles</li>
+</ul>
+<h3>Clearer, Faster Dictation</h3>
+<ul>
+<li>The English speech model stays ready between dictations, with a final accuracy pass when you finish speaking</li>
+<li>Quiet microphone audio is levelled more carefully, and Jack prefers the Mac's built-in microphone over AirPods unless you choose another input</li>
+<li>Text cleanup uses your vocabulary and learned corrections, and can fall back to Apple Intelligence on supported Macs when the local cleanup model is unavailable</li>
+<li>Drag the live caption anywhere on screen. Words appear at a steadier pace, and Jack remembers where you leave it</li>
+<li>Start another dictation immediately after finishing, with more reliable pasting and spacing between consecutive dictations</li>
+</ul>
+<h3>Everyday Fixes</h3>
+<ul>
+<li>Fixed a recurring clipboard pause when working with a large history</li>
+<li>Press Space to open or close Quick Look for the selected clip</li>
+<li>Improved sound-device handling to prevent repeated audio restarts, crackling, and slowdowns</li>
+</ul>
+]]></description>
+            <enclosure url="https://downloads.gilt.novor.dev/releases/v1.1.0/Gilt-1.1.0.dmg" length="209839001" type="application/octet-stream" sparkle:edSignature="arzAQQOFICN1J1CnSMdAocbZjxuiulVIZxeT7G6pEmel6ACBc13RnuFzn4KSWnEALlyPIZOfu0kpZ/9v67MnCQ=="/>
+            <sparkle:deltas>
+                <enclosure url="https://downloads.gilt.novor.dev/releases/v1.1.0/Jack635-607.delta" sparkle:deltaFrom="607" length="3287542" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977808" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="hMqak0yZxxAFyRFG64DFuFqbADx/fL3/C9HMSyWWCLGk5xjJ7uJVopiAjRvOCvsEJRFaAQPTm2uf+XsQXzmXDA=="/>
+                <enclosure url="https://downloads.gilt.novor.dev/releases/v1.1.0/Jack635-603.delta" sparkle:deltaFrom="603" length="3279090" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977808" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="W/UXD+nLx3EUybazyjrNmQOQyG1DCIFDhIgfUwG90MKcM4Wpt3/2h7/hJvRPQqjnBsBapX7FYElNQuzqJAsVDg=="/>
+                <enclosure url="https://downloads.gilt.novor.dev/releases/v1.1.0/Jack635-601.delta" sparkle:deltaFrom="601" length="9287526" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977808" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="SPgn5ecfIyg+XNJPbESj17VuIjuVDQz0ekNRx0QhF15j67j3t9UF8e6CLYOOvzpPFt7S382IB5BjNKtcq7TQCg=="/>
+                <enclosure url="https://downloads.gilt.novor.dev/releases/v1.1.0/Jack635-590.delta" sparkle:deltaFrom="590" length="9360442" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977808" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="OGqL9lhOXcgUIZu7VP4L+xe6CP5GUXPYZ1tgZAVj99CpqdMHUrlZqzKsmEI/MAbDktlp6MseAiPJRFwOK/7qCg=="/>
+            </sparkle:deltas>
+        </item>
+        <item>
             <title>1.0.6</title>
             <pubDate>Wed, 30 Sep 2026 13:08:24 -0400</pubDate>
             <link>https://jack.novor.dev</link>
@@ -40,22 +80,6 @@
                 <enclosure url="https://downloads.gilt.novor.dev/releases/v1.0.5/Jack603-601.delta" sparkle:deltaFrom="601" length="8705222" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977808" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="M42I7CodZ9/5EZ8J5rDFxW/FZ/GBCRqvs0Chb2XysH1Gtfw1FvM7keKwzwjxKsjBDSxn+0NP02dRfoLN+O1YAQ=="/>
                 <enclosure url="https://downloads.gilt.novor.dev/releases/v1.0.5/Jack603-590.delta" sparkle:deltaFrom="590" length="8836534" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977808" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="ZsjZ2uQixDhl3P6DfeKCwE4/AN7DN9PqtnmNZd9NbfJzlZk/OHffE2YIIGeW5RK3KoHj6SgDjKf4zZr/yP/YBg=="/>
                 <enclosure url="https://downloads.gilt.novor.dev/releases/v1.0.5/Jack603-273.delta" sparkle:deltaFrom="273" length="39093650" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="980432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="ifzc6naCVuO4qXJcFDxF46tLgfVV9s4NPjNrOxGgfb5lMb2DV+XkJ7A+aT43QzDYun8RRGPj+ctDNFBO4Gx2Cw=="/>
-            </sparkle:deltas>
-        </item>
-        <item>
-            <title>1.0.4</title>
-            <pubDate>Fri, 04 Sep 2026 21:29:04 -0400</pubDate>
-            <link>https://gilt.novor.dev</link>
-            <sparkle:fullReleaseNotesLink>https://gilt.novor.dev/releases/v1.0.4</sparkle:fullReleaseNotesLink>
-            <sparkle:version>601</sparkle:version>
-            <sparkle:shortVersionString>1.0.4</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://downloads.gilt.novor.dev/releases/v1.0.4/Gilt-1.0.4.dmg" length="388666211" type="application/octet-stream" sparkle:edSignature="zyeSIL9E7tM8kvptedzXQy4gF4zS0SYvl0NN/h2e9kEl9L18/SwZbNzJRlo3vaY233gSQ4QDd08VMb4fY/Z4Cg=="/>
-            <sparkle:deltas>
-                <enclosure url="https://downloads.gilt.novor.dev/releases/v1.0.4/Jack601-590.delta" sparkle:deltaFrom="590" length="2247130" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977808" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="mHBomqeUL53DaiRodzx2+IK5ghUi2Yg9bMGkIBKMKSJF2KOhJjuCsXPAtoeD084ZuZesTbohCxBG+EIanfDwDg=="/>
-                <enclosure url="https://downloads.gilt.novor.dev/releases/v1.0.4/Jack601-273.delta" sparkle:deltaFrom="273" length="60599658" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="980432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="2IdyrF3r1XAr5mHHJ87n6DwY34z6f4+0JfWQxi5+lzXOQDgt3HyARKuSARPYIsQ/CZgpT6OLToCsnHPolrh5Cw=="/>
-                <enclosure url="https://downloads.gilt.novor.dev/releases/v1.0.4/Jack601-259.delta" sparkle:deltaFrom="259" length="62444362" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="980432" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="iZJzyiFJbkRr10karK/13AJenFcP7/Ejs1BAxi/pUyK7NKjqQDSIqYeosoq+oeV8b1cBMGyb13ohmRSaehF0Dw=="/>
             </sparkle:deltas>
         </item>
     </channel>
